@@ -1,8 +1,18 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #eaf1fb;
+  --surface: #f4f7ff;
+  --panel: #ffffff;
+  --border: #d6e0f5;
+  --muted: #5d6c8d;
+  --foreground: #0f172a;
+  --accent: #2f6df6;
+  --accent-strong: #2156c8;
+  --glow: radial-gradient(circle at 20% 20%, #c9d8ff 0, transparent 35%),
+    radial-gradient(circle at 80% 0%, #b4ceff 0, transparent 38%),
+    radial-gradient(circle at 50% 80%, #d8e6ff 0, transparent 35%);
+  color-scheme: light;
 }
 
 @theme inline {
@@ -12,15 +22,28 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  box-sizing: border-box;
 }
 
 body {
-  background: var(--background);
+  min-height: 100vh;
+  margin: 0;
+  background: radial-gradient(120% 120% at 20% 20%, rgba(190, 212, 255, 0.5) 0, transparent 50%),
+      radial-gradient(140% 140% at 80% 0%, rgba(167, 198, 255, 0.4) 0, transparent 52%),
+      var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), "Space Grotesk", "IBM Plex Sans", system-ui,
+    -apple-system, "Segoe UI", sans-serif;
+  letter-spacing: 0.01em;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--foreground);
 }
