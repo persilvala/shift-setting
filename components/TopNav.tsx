@@ -8,6 +8,8 @@ const navItems = [
   { key: "summary", label: "Summary", href: "/summary" },
   { key: "calendar", label: "Calendar", href: "/calendar" },
   { key: "logs", label: "Logs", href: "/logs" },
+  { key: "timesheets", label: "Timesheets", href: "/timesheets" },
+  { key: "payroll", label: "Payroll", href: "/payroll" },
 ];
 
 export function TopNav() {
