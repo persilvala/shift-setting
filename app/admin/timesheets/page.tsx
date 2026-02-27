@@ -16,31 +16,37 @@ const attendance = [
     id: "EMP-0142",
     name: "Monique Rivas",
     dept: "Engineering",
+    calendar: "07:00 - 15:00 (Mon-Fri)",
     hours: "82h",
     overtime: "6h",
     late: "12m",
     undertime: "0",
     status: "Clean",
+    week: { Mo: 1, Tu: 1, We: 1, Th: 1, Fr: 1, Sa: 0, Su: 0 },
   },
   {
     id: "EMP-0178",
     name: "Kai Mendoza",
     dept: "Operations",
+    calendar: "09:00 - 17:00 (Mon-Fri)",
     hours: "76h",
     overtime: "0",
     late: "28m",
     undertime: "40m",
     status: "Attention",
+    week: { Mo: 1, Tu: 1, We: 1, Th: 1, Fr: 1, Sa: 0, Su: 0 },
   },
   {
     id: "EMP-0204",
     name: "Priya Shah",
     dept: "Support",
+    calendar: "11:00 - 19:00 (Tue-Sat)",
     hours: "88h",
     overtime: "10h",
     late: "0",
     undertime: "0",
     status: "Clean",
+    week: { Mo: 0, Tu: 1, We: 1, Th: 1, Fr: 1, Sa: 1, Su: 0 },
   },
 ];
 
@@ -173,14 +179,25 @@ export default function TimesheetsPage() {
                   <p>Standard daily hours, overtime rate, break time deductions</p>
                 </div>
               </div>
-              <div className="flex items-center justify-between rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-3">
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-3">
                 <div>
                   <p className="text-[var(--foreground)] font-semibold">Exports</p>
                   <p>Payroll summary & individual breakdown (Excel/PDF)</p>
                 </div>
-                <button className="rounded-full border border-[var(--border)] px-3 py-1 text-xs font-semibold text-[var(--muted)]" disabled>
-                  Coming soon
-                </button>
+                <div className="flex gap-2 text-xs font-semibold">
+                  <a
+                    className="rounded-full border border-[var(--border)] bg-white px-3 py-1 text-[var(--muted)] hover:border-[var(--accent)] hover:text-[var(--foreground)]"
+                    href="/api/export/timesheets/excel"
+                  >
+                    Export Excel
+                  </a>
+                  <a
+                    className="rounded-full border border-[var(--border)] bg-white px-3 py-1 text-[var(--muted)] hover:border-[var(--accent)] hover:text-[var(--foreground)]"
+                    href="/api/export/timesheets/pdf"
+                  >
+                    Export PDF
+                  </a>
+                </div>
               </div>
             </div>
           </div>
@@ -222,19 +239,34 @@ export default function TimesheetsPage() {
               <p className="text-xs uppercase tracking-[0.28em] text-[var(--muted)]">Attendance snapshot</p>
               <h3 className="text-lg font-semibold text-[var(--foreground)]">Cutoff detail</h3>
             </div>
-            <button className="rounded-full border border-[var(--border)] px-3 py-1 text-xs font-semibold text-[var(--muted)]" disabled>
-              Export preview
-            </button>
+            <div className="flex gap-2 text-xs font-semibold">
+              <a
+                className="rounded-full border border-[var(--border)] bg-white px-3 py-1 text-[var(--muted)] hover:border-[var(--accent)] hover:text-[var(--foreground)]"
+                href="/api/export/timesheets/excel"
+              >
+                Export Excel
+              </a>
+              <a
+                className="rounded-full border border-[var(--border)] bg-white px-3 py-1 text-[var(--muted)] hover:border-[var(--accent)] hover:text-[var(--foreground)]"
+                href="/api/export/timesheets/pdf"
+              >
+                Export PDF
+              </a>
+            </div>
           </div>
           <table className="w-full text-sm">
             <thead className="bg-[var(--surface)] text-[var(--muted)]">
               <tr>
                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Employee</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Dept</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Hours</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">OT</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Late</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Undertime</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Calendar</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Mo</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Tu</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">We</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Th</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Fr</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Sa</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Su</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Status</th>
               </tr>
             </thead>
@@ -243,10 +275,14 @@ export default function TimesheetsPage() {
                 <tr key={row.id} className="hover:bg-[var(--surface)]/60">
                   <td className="px-4 py-4 font-semibold">{row.name}</td>
                   <td className="px-4 py-4 text-[var(--muted)]">{row.dept}</td>
-                  <td className="px-4 py-4">{row.hours}</td>
-                  <td className="px-4 py-4">{row.overtime}</td>
-                  <td className="px-4 py-4">{row.late}</td>
-                  <td className="px-4 py-4">{row.undertime}</td>
+                  <td className="px-4 py-4 text-[var(--muted)]">{row.calendar}</td>
+                  <td className="px-4 py-4">{row.week.Mo}</td>
+                  <td className="px-4 py-4">{row.week.Tu}</td>
+                  <td className="px-4 py-4">{row.week.We}</td>
+                  <td className="px-4 py-4">{row.week.Th}</td>
+                  <td className="px-4 py-4">{row.week.Fr}</td>
+                  <td className="px-4 py-4">{row.week.Sa}</td>
+                  <td className="px-4 py-4">{row.week.Su}</td>
                   <td className="px-4 py-4">
                     <span
                       className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.22em] ${

@@ -1,4 +1,5 @@
 import { TopNav } from "@/components/TopNav";
+import { dateRange, timesheetRows } from "@/lib/timesheetData";
 
 const summaryCards = [
   { title: "Total employees", value: "84", meta: "across 6 departments" },
@@ -41,9 +42,20 @@ export default function SummaryPage() {
             <h1 className="text-3xl font-semibold leading-tight text-[var(--foreground)] md:text-4xl">
               Payroll and attendance overview.
             </h1>
-            <button className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-sm font-semibold text-[var(--muted)] shadow-sm transition hover:border-[var(--accent)] hover:text-[var(--foreground)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]">
-              Export preview
-            </button>
+            <div className="flex flex-wrap gap-2 text-sm font-semibold text-[var(--muted)]">
+              <a
+                className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--surface)] px-4 py-3 shadow-sm transition hover:border-[var(--accent)] hover:text-[var(--foreground)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
+                href="/api/export/timesheets/excel"
+              >
+                Export Excel
+              </a>
+              <a
+                className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--surface)] px-4 py-3 shadow-sm transition hover:border-[var(--accent)] hover:text-[var(--foreground)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
+                href="/api/export/timesheets/pdf"
+              >
+                Export PDF
+              </a>
+            </div>
           </div>
         </header>
 
@@ -58,6 +70,53 @@ export default function SummaryPage() {
               <p className="text-sm text-[var(--muted)]">{card.meta}</p>
             </div>
           ))}
+        </section>
+
+        <section className="rounded-3xl border border-[var(--border)] bg-[var(--panel)]/90 p-6 shadow-[0_24px_70px_rgba(16,40,94,0.1)]">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-xs uppercase tracking-[0.26em] text-[var(--muted)]">Employees</p>
+              <h3 className="text-xl font-semibold text-[var(--foreground)]">Names, departments, and duty calendar</h3>
+              <p className="text-sm text-[var(--muted)]">Date range: {dateRange}</p>
+            </div>
+            <span className="rounded-full bg-[var(--accent)]/10 px-3 py-1 text-xs font-semibold text-[var(--accent)]">Preview</span>
+          </div>
+          <div className="mt-4 overflow-hidden rounded-2xl border border-[var(--border)] bg-white/90 shadow-[0_12px_32px_rgba(16,40,94,0.06)]">
+            <table className="w-full text-sm">
+              <thead className="bg-[var(--surface)] text-[var(--muted)]">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">User ID</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Name</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Department</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Calendar</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Mo</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Tu</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">We</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Th</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Fr</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Sa</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Su</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--border)]/70 text-[var(--foreground)]">
+                {timesheetRows.map((row) => (
+                  <tr key={row.id} className="hover:bg-[var(--surface)]/60">
+                    <td className="px-4 py-3 font-semibold text-[var(--foreground)]">{row.id}</td>
+                    <td className="px-4 py-3 text-[var(--muted)]">{row.name}</td>
+                    <td className="px-4 py-3 text-[var(--muted)]">{row.dept}</td>
+                    <td className="px-4 py-3 text-[var(--muted)]">{row.calendar}</td>
+                    <td className="px-4 py-3 text-center">{row.week.Mo}</td>
+                    <td className="px-4 py-3 text-center">{row.week.Tu}</td>
+                    <td className="px-4 py-3 text-center">{row.week.We}</td>
+                    <td className="px-4 py-3 text-center">{row.week.Th}</td>
+                    <td className="px-4 py-3 text-center">{row.week.Fr}</td>
+                    <td className="px-4 py-3 text-center">{row.week.Sa}</td>
+                    <td className="px-4 py-3 text-center">{row.week.Su}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </section>
 
         <section className="grid gap-6 lg:grid-cols-[1.2fr_1fr]">
@@ -108,29 +167,6 @@ export default function SummaryPage() {
               <p className="text-[var(--foreground)] font-semibold">Exports</p>
               <p className="mt-1">Excel/PDF export planned after computation wiring.</p>
             </div>
-          </div>
-        </section>
-
-        <section className="rounded-3xl border border-[var(--border)] bg-[var(--panel)]/90 p-6 shadow-[0_24px_70px_rgba(16,40,94,0.1)]">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-xs uppercase tracking-[0.26em] text-[var(--muted)]">Reports</p>
-              <h3 className="text-xl font-semibold text-[var(--foreground)]">Planned outputs</h3>
-            </div>
-            <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700">Preview</span>
-          </div>
-          <div className="mt-4 grid gap-3 md:grid-cols-3">
-            {reportItems.map((item) => (
-              <div key={item.title} className="rounded-2xl border border-[var(--border)] bg-white px-4 py-4 text-sm text-[var(--muted)] shadow-[0_10px_28px_rgba(16,40,94,0.06)]">
-                <div className="flex items-center justify-between">
-                  <p className="text-[var(--foreground)] font-semibold">{item.title}</p>
-                  <span className="rounded-full bg-[var(--accent)]/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--accent)]">
-                    {item.status}
-                  </span>
-                </div>
-                <p className="mt-1 leading-relaxed">{item.detail}</p>
-              </div>
-            ))}
           </div>
         </section>
       </main>
