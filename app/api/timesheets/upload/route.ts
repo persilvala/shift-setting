@@ -48,7 +48,15 @@ export async function POST(request: Request) {
         }),
       }));
       const result = parseExcelTimesheet(buffer);
-      return NextResponse.json({ ok: true, format: "excel", rows: result.rows, warnings: result.warnings, sheets });
+      return NextResponse.json({
+        ok: true,
+        format: "excel",
+        rows: result.rows,
+        warnings: result.warnings,
+        sheets,
+        startDate: result.startDate,
+        endDate: result.endDate,
+      });
     }
 
     if (isCsv(mime, fileName)) {
@@ -61,12 +69,28 @@ export async function POST(request: Request) {
         }),
       }));
       const result = parseCsvTimesheet(buffer);
-      return NextResponse.json({ ok: true, format: "excel", rows: result.rows, warnings: result.warnings, sheets });
+      return NextResponse.json({
+        ok: true,
+        format: "excel",
+        rows: result.rows,
+        warnings: result.warnings,
+        sheets,
+        startDate: result.startDate,
+        endDate: result.endDate,
+      });
     }
 
     if (isPdf(mime, fileName)) {
       const result = await parsePdfTimesheet(buffer);
-      return NextResponse.json({ ok: true, format: "pdf", rows: result.rows, warnings: result.warnings, sheets: [] });
+      return NextResponse.json({
+        ok: true,
+        format: "pdf",
+        rows: result.rows,
+        warnings: result.warnings,
+        sheets: [],
+        startDate: result.startDate,
+        endDate: result.endDate,
+      });
     }
 
     return NextResponse.json(

@@ -15,6 +15,13 @@ export type ParsedTimesheetRow = {
   userId?: string | null;
   template?: string | null;
   raw?: string[];
+  // Time card fields (Before Noon, After Noon, Overtime)
+  beforeNoonIn?: string | null;
+  beforeNoonOut?: string | null;
+  afterNoonIn?: string | null;
+  afterNoonOut?: string | null;
+  overtimeIn?: string | null;
+  overtimeOut?: string | null;
   // Payroll fields
   workHours?: number | null;
   workHoursActual?: number | null;
@@ -45,6 +52,8 @@ type ParseResult = {
   format: "excel" | "pdf";
   rows: ParsedTimesheetRow[];
   warnings: string[];
+  startDate?: string | null;
+  endDate?: string | null;
 };
 
 function isLikelyName(value: string | null | undefined) {
@@ -314,12 +323,6 @@ function formatYMD(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-function addDays(d: Date, days: number): Date {
-  const x = new Date(d);
-  x.setDate(x.getDate() + days);
-  return x;
-}
-
 function sumPairs(pairs: Array<{ inMin: number | null; outMin: number | null }>): number {
   let total = 0;
   for (const p of pairs) {
@@ -337,44 +340,95 @@ function parseTimeCardBlocksSheet(rows: (string | number | Date | undefined)[][]
 
   const out: ParsedTimesheetRow[] = [];
   const warnings: string[] = [];
+  let dateRangeText: unknown = null;
+  let startDate: Date | null = null;
+  let employeeName: string | null = null;
 
+  // Find Time Card header row and extract metadata
+  for (let r = 0; r < Math.min(rows.length, 15); r++) {
+    const rowText = rows[r].map((c) => norm(c)).filter(Boolean).join(" ");
+    if (rowText.includes("time card") && rowText.includes("before noon")) {
+      // Found header row like: ["Date/Weekday","Before Noon",null,null,null,null,"After Noon",...]
+      // Look for employee name and date range in previous rows
+      for (let prev = r - 1; prev >= 0; prev--) {
+        const prevRow = rows[prev];
+        if (prevRow.some((c) => norm(c)?.includes("name"))) {
+          const nameIdx = prevRow.findIndex((c) => norm(c)?.toLowerCase() === "name");
+          if (nameIdx >= 0 && prevRow[nameIdx + 1]) {
+            employeeName = stringOrNull(prevRow[nameIdx + 1]) ?? employeeName;
+          }
+        }
+        if (prevRow.some((c) => norm(c)?.includes("date"))) {
+          const dateIdx = prevRow.findIndex((c) => norm(c)?.toLowerCase() === "date");
+          if (dateIdx >= 0 && prevRow[dateIdx + 1]) {
+            dateRangeText = prevRow[dateIdx + 1];
+            startDate = parseDateRangeStart(dateRangeText);
+          }
+        }
+      }
+      break;
+    }
+  }
+
+  // If not found in that format, try alternative format
+  if (!startDate || !employeeName) {
+    for (let r = 0; r < Math.min(rows.length, 10); r++) {
+      const row = rows[r];
+      for (let c = 0; c < row.length; c++) {
+        if (norm(row[c]) === "time card") {
+          // Found Time Card marker, look for employee name and date nearby
+          const nameRow = rows[3];
+          if (nameRow) {
+            const nameIdx = nameRow.findIndex((cell) => norm(cell)?.toLowerCase() === "name");
+            if (nameIdx >= 0 && nameRow[nameIdx + 1]) {
+              employeeName = stringOrNull(nameRow[nameIdx + 1]) ?? employeeName;
+            }
+          }
+          const dateRow = rows[4];
+          if (dateRow) {
+            const dateIdx = dateRow.findIndex((cell) => norm(cell)?.toLowerCase() === "date");
+            if (dateIdx >= 0 && dateRow[dateIdx + 1]) {
+              dateRangeText = dateRow[dateIdx + 1];
+              startDate = parseDateRangeStart(dateRangeText);
+            }
+          }
+          break;
+        }
+      }
+      if (startDate && employeeName) break;
+    }
+  }
+
+  if (!employeeName || !startDate) return null;
+  if (!isLikelyPersonName(employeeName)) return null;
+
+  // Find all Time Card blocks and parse weekday data
   for (let r = 0; r < rows.length; r++) {
     for (let c = 0; c < (rows[r]?.length ?? 0); c++) {
       if (norm(rows[r][c]) !== "time card") continue;
 
       const startCol = c;
 
-      const employeeName = rows[3]?.[startCol + 9];
-      const dateRangeText = rows[4]?.[startCol + 1];
-      const startDate = parseDateRangeStart(dateRangeText);
-
-      if (!employeeName || !startDate) continue;
-      if (!isLikelyPersonName(employeeName)) continue;
-
-      let dayStartRow: number | null = null;
-      for (let rr = r; rr < Math.min(r + 15, rows.length); rr++) {
-        const v = rows[rr]?.[startCol];
-        if (typeof v === "string" && v.trim().match(/^\d{1,2}\s+/)) {
-          dayStartRow = rr;
-          break;
-        }
-      }
-      if (dayStartRow == null) continue;
-
-      for (let rr = dayStartRow; rr < rows.length; rr++) {
+      // Find weekday rows (rows that start with day number like "11 Mo", "12 Tu", etc.)
+      for (let rr = r + 1; rr < Math.min(r + 20, rows.length); rr++) {
         const label = rows[rr]?.[startCol];
-        if (!label) break;
+        if (!label) continue;
         if (norm(label) === "time card") break;
-        if (typeof label !== "string") break;
-        const dayMatch = label.trim().match(/^(\d{1,2})/);
-        if (!dayMatch) break;
+        if (typeof label !== "string") continue;
+        
+        const dayMatch = label.trim().match(/^(\d{1,2})\s+([A-Za-z]{2,3})/);
+        if (!dayMatch) continue;
+        
         const dayNum = Number(dayMatch[1]);
-        if (!Number.isFinite(dayNum)) break;
+        const weekday = dayMatch[2];
+        if (!Number.isFinite(dayNum)) continue;
 
         const dateObj = new Date(startDate);
         dateObj.setDate(dayNum);
         const date = formatYMD(dateObj);
 
+        // Extract all 6 time fields from columns
+        // Column layout: startCol=day label, +1=BN In, +2=null, +3=BN Out, +4-5=null, +6=AN In, +7=null, +8=AN Out, +10=OT In, +12=OT Out
         const bnIn = excelTimeToMinutes(rows[rr]?.[startCol + 1]);
         const bnOut = excelTimeToMinutes(rows[rr]?.[startCol + 3]);
         const anIn = excelTimeToMinutes(rows[rr]?.[startCol + 6]);
@@ -394,22 +448,48 @@ function parseTimeCardBlocksSheet(rows: (string | number | Date | undefined)[][]
         const timeInMin = ins.length ? Math.min(...ins) : null;
         const timeOutMin = outs.length ? Math.max(...outs) : null;
 
-        if (timeInMin != null || timeOutMin != null || totalMins > 0) {
-          out.push({
-            employeeName: String(employeeName).trim(),
-            date,
-            timeIn: minutesToHHMM(timeInMin),
-            timeOut: minutesToHHMM(timeOutMin),
-            totalHours: Math.round((totalMins / 60) * 100) / 100,
-            issues: [],
-            sourceLine: rr,
-          });
-        }
+        // Always push a row for each weekday, even if no time data
+        out.push({
+          employeeName: employeeName.trim(),
+          date,
+          timeIn: timeInMin !== null ? minutesToHHMM(timeInMin) : null,
+          timeOut: timeOutMin !== null ? minutesToHHMM(timeOutMin) : null,
+          totalHours: totalMins > 0 ? Math.round((totalMins / 60) * 100) / 100 : null,
+          issues: [],
+          sourceLine: rr,
+          weekday: weekday,
+          template: "time-card",
+          // All 6 time card fields
+          beforeNoonIn: bnIn !== null ? minutesToHHMM(bnIn) : null,
+          beforeNoonOut: bnOut !== null ? minutesToHHMM(bnOut) : null,
+          afterNoonIn: anIn !== null ? minutesToHHMM(anIn) : null,
+          afterNoonOut: anOut !== null ? minutesToHHMM(anOut) : null,
+          overtimeIn: otIn !== null ? minutesToHHMM(otIn) : null,
+          overtimeOut: otOut !== null ? minutesToHHMM(otOut) : null,
+        });
       }
     }
   }
 
-  return { format: "excel", rows: out, warnings };
+  if (!out.length) return null;
+
+  const endDate = parseDateRangeEnd(dateRangeText);
+  return {
+    format: "excel",
+    rows: out,
+    warnings,
+    startDate: startDate?.toISOString().slice(0, 10) ?? null,
+    endDate: endDate?.toISOString().slice(0, 10) ?? null,
+  };
+}
+
+function parseDateRangeEnd(rangeText: unknown): Date | null {
+  const s = String(rangeText ?? "");
+  const parts = s.split("~");
+  if (parts.length < 2) return parseDateRangeStart(rangeText);
+  const second = parts[1]?.trim();
+  const d = new Date(second);
+  return Number.isNaN(d.getTime()) ? null : d;
 }
 
 function detectAttendanceTemplate(lines: string[]) {
@@ -540,7 +620,13 @@ function parseAttendanceTemplatePdf(lines: string[]): ParseResult | null {
   });
 
   if (!rows.length) return null;
-  return { format: "pdf", rows, warnings };
+  return {
+    format: "pdf",
+    rows,
+    warnings,
+    startDate: meta.startDate?.toISOString().slice(0, 10) ?? null,
+    endDate: meta.endDate?.toISOString().slice(0, 10) ?? null,
+  };
 }
 
 function parseSheetMeta(
@@ -875,7 +961,13 @@ function parseAttendanceStatisticTable(rows: (string | number | Date | undefined
   }
 
   if (!parsed.length) return null;
-  return { format: "excel", rows: parsed, warnings };
+  return {
+    format: "excel",
+    rows: parsed,
+    warnings,
+    startDate: meta.startDate?.toISOString().slice(0, 10) ?? null,
+    endDate: meta.endDate?.toISOString().slice(0, 10) ?? null,
+  };
 }
 
 // Parse shift code template (User ID, Name, Dept, then date columns with shift codes)
@@ -957,7 +1049,13 @@ function parseShiftCodeTemplateSheet(
   }
 
   if (!parsed.length) return null;
-  return { format: "excel", rows: parsed, warnings };
+  return {
+    format: "excel",
+    rows: parsed,
+    warnings,
+    startDate: meta.startDate?.toISOString().slice(0, 10) ?? null,
+    endDate: meta.endDate?.toISOString().slice(0, 10) ?? null,
+  };
 }
 
 function findAttendanceBlocks(rows: (string | number | Date | undefined)[][]) {
@@ -1001,13 +1099,19 @@ function parseAttendanceTemplateSheet(rows: (string | number | Date | undefined)
 
   const parsed: ParsedTimesheetRow[] = [];
   const warnings: string[] = [];
+  let firstMetaStartDate: Date | null = null;
+  let firstMetaEndDate: Date | null = null;
 
-  blocks.forEach((block) => {
+  for (const block of blocks) {
     const startRow = block.headerRow + 1;
     const c = block.headerCol;
     const meta = parseSheetMeta(rows, { start: c, end: c + 30 });
     if (!meta.startDate) warnings.push("Missing date range start");
     if (!meta.name) warnings.push("Missing employee name");
+    
+    // Capture first block's meta for return
+    if (!firstMetaStartDate && meta.startDate) firstMetaStartDate = meta.startDate;
+    if (!firstMetaEndDate && meta.endDate) firstMetaEndDate = meta.endDate;
 
     let blankStreak = 0;
 
@@ -1031,10 +1135,16 @@ function parseAttendanceTemplateSheet(rows: (string | number | Date | undefined)
         blankStreak = 0;
       }
     }
-  });
+  }
 
   if (!parsed.length) return null;
-  return { format: "excel", rows: parsed, warnings };
+  return {
+    format: "excel",
+    rows: parsed,
+    warnings,
+    startDate: firstMetaStartDate?.toISOString().slice(0, 10) ?? null,
+    endDate: firstMetaEndDate?.toISOString().slice(0, 10) ?? null,
+  };
 }
 
 function findHeaderRowAndMapping(rows: (string | number | Date | undefined)[][]) {
@@ -1146,18 +1256,20 @@ export function parseExcelTimesheet(buffer: Buffer): ParseResult {
 
   const aggregatedRows: ParsedTimesheetRow[] = [];
   const warnings: string[] = [];
+  let startDate: string | null = null;
+  let endDate: string | null = null;
 
   // Prioritize attendance statistic/payroll sheets first
-  const prioritySheet = sheetNames.find((name) =>
+  const prioritySheet = sheetNames.find((name: string) =>
     name.toLowerCase().includes("attendance statistic") ||
     name.toLowerCase().includes("payroll")
   );
 
   const orderedSheets = prioritySheet
-    ? [prioritySheet, ...sheetNames.filter((n) => n !== prioritySheet)]
+    ? [prioritySheet, ...sheetNames.filter((n: string) => n !== prioritySheet)]
     : sheetNames;
 
-  orderedSheets.forEach((sheetName) => {
+  orderedSheets.forEach((sheetName: string) => {
     const sheet = workbook.Sheets[sheetName];
     const rows = XLSX.utils.sheet_to_json<(string | number | Date | undefined)[]>(sheet, {
       header: 1,
@@ -1166,55 +1278,78 @@ export function parseExcelTimesheet(buffer: Buffer): ParseResult {
       defval: "",
     });
 
+    let sheetParsed = false;
+
     const statParsed = parseAttendanceStatisticTable(rows);
     if (statParsed) {
       aggregatedRows.push(...statParsed.rows.map((r) => ({ ...r, sheetName })));
       warnings.push(...statParsed.warnings.map((w) => `${sheetName}: ${w}`));
-      return;
+      if (!startDate && statParsed.startDate) startDate = statParsed.startDate;
+      if (!endDate && statParsed.endDate) endDate = statParsed.endDate;
+      sheetParsed = true;
     }
 
     const attendanceParsed = parseAttendanceTemplateSheet(rows);
     if (attendanceParsed) {
       aggregatedRows.push(...attendanceParsed.rows.map((r) => ({ ...r, sheetName })));
       warnings.push(...attendanceParsed.warnings.map((w) => `${sheetName}: ${w}`));
-      return;
+      if (!startDate && attendanceParsed.startDate) startDate = attendanceParsed.startDate;
+      if (!endDate && attendanceParsed.endDate) endDate = attendanceParsed.endDate;
+      sheetParsed = true;
     }
 
     const timeCardParsed = parseTimeCardBlocksSheet(rows);
     if (timeCardParsed) {
       aggregatedRows.push(...timeCardParsed.rows.map((r) => ({ ...r, sheetName })));
       warnings.push(...timeCardParsed.warnings.map((w) => `${sheetName}: ${w}`));
-      return;
+      if (!startDate && timeCardParsed.startDate) startDate = timeCardParsed.startDate;
+      if (!endDate && timeCardParsed.endDate) endDate = timeCardParsed.endDate;
+      sheetParsed = true;
     }
 
     // Shift setting table
-    const shiftHeaderIndex = rows.findIndex((row) => {
-      const text = row.map((cell) => stringOrNull(cell)?.toLowerCase() ?? "").join(" ");
-      return text.includes("user id") && text.includes("name");
-    });
-    if (shiftHeaderIndex !== -1) {
-    const shiftParsed = parseShiftCodeTemplateSheet(rows, shiftHeaderIndex);
-    if (shiftParsed) {
-      aggregatedRows.push(...shiftParsed.rows.map((r) => ({ ...r, sheetName })));
-      warnings.push(...shiftParsed.warnings.map((w) => `${sheetName}: ${w}`));
-      return;
-    }
+    if (!sheetParsed) {
+      const shiftHeaderIndex = rows.findIndex((row: (string | number | Date | undefined)[]) => {
+        const text = row.map((cell: string | number | Date | undefined) => stringOrNull(cell)?.toLowerCase() ?? "").join(" ");
+        return text.includes("user id") && text.includes("name");
+      });
+      if (shiftHeaderIndex !== -1) {
+        const shiftParsed = parseShiftCodeTemplateSheet(rows, shiftHeaderIndex);
+        if (shiftParsed) {
+          aggregatedRows.push(...shiftParsed.rows.map((r) => ({ ...r, sheetName })));
+          warnings.push(...shiftParsed.warnings.map((w) => `${sheetName}: ${w}`));
+          if (!startDate && shiftParsed.startDate) startDate = shiftParsed.startDate;
+          if (!endDate && shiftParsed.endDate) endDate = shiftParsed.endDate;
+        }
+      }
     }
 
-    const generic = parseGenericMappedSheet(rows);
-    aggregatedRows.push(...generic.rows.map((r) => ({ ...r, sheetName })));
-    warnings.push(...generic.warnings.map((w) => `${sheetName}: ${w}`));
+    // Generic parser as fallback
+    if (!sheetParsed) {
+      const generic = parseGenericMappedSheet(rows);
+      aggregatedRows.push(...generic.rows.map((r) => ({ ...r, sheetName })));
+      warnings.push(...generic.warnings.map((w) => `${sheetName}: ${w}`));
+    }
   });
 
   const cleaned = aggregatedRows.filter((row) => {
+    // Keep rows with valid employee names
+    if (!isLikelyPersonName(row.employeeName)) return false;
+    
+    // For Time Card template rows, keep them even without time data (to show all weekdays)
+    if (row.template === "time-card") return !!row.date;
+    
+    // For other templates, require some time data
     const hasTime = (row.timeIn && row.timeIn.trim() !== "") || (row.timeOut && row.timeOut.trim() !== "") || (row.totalHours ?? 0) > 0;
-    return isLikelyPersonName(row.employeeName) && hasTime;
+    return hasTime;
   });
 
   return {
     format: "excel",
     rows: cleaned,
     warnings,
+    startDate,
+    endDate,
   };
 }
 
@@ -1328,5 +1463,7 @@ export async function parsePdfTimesheet(buffer: Buffer): Promise<ParseResult> {
     format: "pdf",
     rows: parsedRows.map((r) => ({ ...r, sheetName: r.sheetName ?? "PDF" })),
     warnings,
+    startDate: null,
+    endDate: null,
   };
 }

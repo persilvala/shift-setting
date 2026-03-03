@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import type { ParsedTimesheetRow } from "@/lib/timesheetParser";
 
@@ -9,6 +9,8 @@ type UploadSuccess = {
   format: "excel" | "pdf";
   rows: ParsedTimesheetRow[];
   warnings: string[];
+  startDate?: string | null;
+  endDate?: string | null;
 };
 
 type UploadError = { ok: false; error: string };
@@ -21,9 +23,25 @@ export function TimesheetUpload() {
   const [result, setResult] = useState<UploadSuccess | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [startDate, setStartDate] = useState<string | null>(null);
+  const [endDate, setEndDate] = useState<string | null>(null);
 
   const previewRows = useMemo(() => (result?.rows ?? []).slice(0, PREVIEW_LIMIT), [result]);
   const totalRows = result?.rows.length ?? 0;
+
+  // Restore dates from sessionStorage on mount
+  useEffect(() => {
+    const metaRaw = sessionStorage.getItem("timesheetMeta");
+    if (metaRaw) {
+      try {
+        const meta = JSON.parse(metaRaw);
+        if (meta.startDate) setStartDate(meta.startDate);
+        if (meta.endDate) setEndDate(meta.endDate);
+      } catch {
+        // ignore
+      }
+    }
+  }, []);
 
   const handleGeneratePayroll = () => {
     if (!result?.rows.length) {
@@ -69,6 +87,8 @@ export function TimesheetUpload() {
         });
 
       setResult({ ...data, rows: mappedRows });
+      setStartDate(data.startDate ?? null);
+      setEndDate(data.endDate ?? null);
       sessionStorage.setItem("timesheetData", JSON.stringify(mappedRows));
       sessionStorage.setItem(
         "timesheetMeta",
@@ -76,6 +96,8 @@ export function TimesheetUpload() {
           format: data.format,
           totalRows: mappedRows.length,
           uploadedAt: new Date().toISOString(),
+          startDate: data.startDate,
+          endDate: data.endDate,
         })
       );
     } catch (err) {
@@ -169,18 +191,30 @@ export function TimesheetUpload() {
             <div className="flex flex-wrap gap-2 text-sm font-semibold text-[var(--muted)]">
               <span className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-white px-3 py-1">Rows: {totalRows}</span>
               <span className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-white px-3 py-1">Format: {result.format.toUpperCase()}</span>
+              {(startDate || endDate) && (
+                <span className="inline-flex items-center gap-2 rounded-full border border-[var(--accent)] bg-[var(--accent)]/10 px-3 py-1 text-[var(--accent)]">
+                  Period: {startDate ?? "—"} to {endDate ?? "—"}
+                </span>
+              )}
             </div>
           </div>
 
           <div className="mt-5 overflow-hidden rounded-2xl border border-[var(--border)] bg-white/90 shadow-[0_12px_32px_rgba(16,40,94,0.06)]">
             <div className="overflow-x-auto">
-              <table className="min-w-[880px] w-full text-sm">
+              <table className="min-w-[1400px] w-full text-sm">
                 <thead className="bg-[var(--surface)] text-[var(--muted)]">
                   <tr>
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Name</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Date</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Weekday</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Start</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">End</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Before Noon In</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Before Noon Out</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">After Noon In</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">After Noon Out</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Overtime In</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Overtime Out</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Hours</th>
                   </tr>
                 </thead>
@@ -190,8 +224,15 @@ export function TimesheetUpload() {
                       <tr key={`${row.employeeName}-${row.date}-${row.timeIn}-${idx}`} className="hover:bg-[var(--surface)]/60">
                         <td className="px-4 py-3 font-semibold text-[var(--foreground)]">{row.employeeName || "—"}</td>
                         <td className="px-4 py-3 text-[var(--muted)]">{row.date || "—"}</td>
-                        <td className="px-4 py-3 text-[var(--muted)]">{row.timeIn || "—"}</td>
-                        <td className="px-4 py-3 text-[var(--muted)]">{row.timeOut || "—"}</td>
+                        <td className="px-4 py-3 text-[var(--muted)]">{row.weekday || "—"}</td>
+                        <td className="px-4 py-3 text-[var(--muted)]">{startDate ?? "—"}</td>
+                        <td className="px-4 py-3 text-[var(--muted)]">{endDate ?? "—"}</td>
+                        <td className="px-4 py-3 text-[var(--muted)]">{row.beforeNoonIn ?? "—"}</td>
+                        <td className="px-4 py-3 text-[var(--muted)]">{row.beforeNoonOut ?? "—"}</td>
+                        <td className="px-4 py-3 text-[var(--muted)]">{row.afterNoonIn ?? "—"}</td>
+                        <td className="px-4 py-3 text-[var(--muted)]">{row.afterNoonOut ?? "—"}</td>
+                        <td className="px-4 py-3 text-[var(--muted)]">{row.overtimeIn ?? "—"}</td>
+                        <td className="px-4 py-3 text-[var(--muted)]">{row.overtimeOut ?? "—"}</td>
                         <td className="px-4 py-3 text-[var(--muted)]">{formatHours(row.totalHours)}</td>
                       </tr>
                     );
