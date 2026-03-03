@@ -4,10 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
 const navItems = [
-  { key: "payments", label: "Payments", href: "/" },
-  { key: "summary", label: "Summary", href: "/summary" },
-  { key: "calendar", label: "Calendar", href: "/calendar" },
-  { key: "logs", label: "Logs", href: "/logs" },
+  { key: "overview", label: "Overview", href: "/" },
   { key: "timesheets", label: "Timesheets", href: "/timesheets" },
   { key: "payroll", label: "Payroll", href: "/payroll" },
 ];

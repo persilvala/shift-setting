@@ -47,6 +47,21 @@ type ParseResult = {
   warnings: string[];
 };
 
+function isLikelyName(value: string | null | undefined) {
+  if (!value) return false;
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  const lower = trimmed.toLowerCase();
+  const stopWords = ["before noon", "in", "out", "login", "logout", "time in", "time out"];
+  if (stopWords.includes(lower)) return false;
+  // Reject strings that are only numbers, dashes, or a single character
+  if (/^[-0-9.\s]+$/.test(trimmed)) return false;
+  if (trimmed.length < 2) return false;
+  // Require at least one letter
+  if (!/[a-z]/i.test(trimmed)) return false;
+  return true;
+}
+
 const HEADER_MAP: Record<string, NormalizedField> = {
   name: "employeeName",
   "employee name": "employeeName",
@@ -54,6 +69,10 @@ const HEADER_MAP: Record<string, NormalizedField> = {
   "full name": "employeeName",
   "staff name": "employeeName",
   "team member": "employeeName",
+  "timein": "timeIn",
+  "timeout": "timeOut",
+  "clockin": "timeIn",
+  "clockout": "timeOut",
 
   date: "date",
   "work date": "date",
@@ -80,7 +99,12 @@ const REQUIRED_FIELDS: NormalizedField[] = ["employeeName", "date"];
 const EXCEL_EPOCH = new Date(Date.UTC(1899, 11, 30)).getTime();
 
 function normalizeHeaderLabel(label: string) {
-  return label
+  const withSpaces = label
+    // insert spaces before camelCase boundaries (e.g., TimeIn -> Time In)
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2");
+
+  return withSpaces
     .trim()
     .toLowerCase()
     .replace(/[_-]/g, " ")
@@ -213,10 +237,186 @@ function stringOrNull(value: unknown): string | null {
   return null;
 }
 
+function isLikelyPersonName(value: unknown): boolean {
+  const s = String(value ?? "").trim();
+  if (!s) return false;
+
+  const lower = s.toLowerCase();
+
+  // reject placeholders / numbers
+  if (s === "—" || s === "-" || s === "0") return false;
+  if (/^\d+$/.test(s)) return false;
+
+  // reject known template labels
+  const bad = new Set([
+    "before noon",
+    "after noon",
+    "overtime",
+    "time card",
+    "date",
+    "weekday",
+    "in",
+    "out",
+    "hours",
+    "total",
+  ]);
+  if (bad.has(lower)) return false;
+
+  // must contain letters
+  if (!/[a-z]/i.test(s)) return false;
+
+  // MUST be at least 2 words (first + last name)
+  if (s.split(/\s+/).length < 2) return false;
+
+  return true;
+}
+
+function norm(value: unknown) {
+  return String(value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function excelTimeToMinutes(value: unknown): number | null {
+  if (value == null || value === "") return null;
+
+  if (value instanceof Date) return value.getHours() * 60 + value.getMinutes();
+
+  if (typeof value === "number") {
+    const mins = Math.round(value * 24 * 60);
+    return mins >= 0 && mins < 24 * 60 ? mins : null;
+  }
+
+  if (typeof value === "string") {
+    const d = new Date(`2000-01-01 ${value.trim()}`);
+    if (!Number.isNaN(d.getTime())) return d.getHours() * 60 + d.getMinutes();
+  }
+
+  return null;
+}
+
+function minutesToHHMM(minutes: number | null): string | null {
+  if (minutes == null) return null;
+  const hh = String(Math.floor(minutes / 60)).padStart(2, "0");
+  const mm = String(minutes % 60).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+function parseDateRangeStart(rangeText: unknown): Date | null {
+  const s = String(rangeText ?? "");
+  const first = s.split("~")[0]?.trim();
+  const d = new Date(first);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function formatYMD(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function addDays(d: Date, days: number): Date {
+  const x = new Date(d);
+  x.setDate(x.getDate() + days);
+  return x;
+}
+
+function sumPairs(pairs: Array<{ inMin: number | null; outMin: number | null }>): number {
+  let total = 0;
+  for (const p of pairs) {
+    if (p.inMin == null || p.outMin == null) continue;
+    let out = p.outMin;
+    if (out < p.inMin) out += 24 * 60;
+    total += out - p.inMin;
+  }
+  return total;
+}
+
+function parseTimeCardBlocksSheet(rows: (string | number | Date | undefined)[][]): ParseResult | null {
+  const containsTimeCard = rows.some((r) => r.some((c) => norm(c) === "time card"));
+  if (!containsTimeCard) return null;
+
+  const out: ParsedTimesheetRow[] = [];
+  const warnings: string[] = [];
+
+  for (let r = 0; r < rows.length; r++) {
+    for (let c = 0; c < (rows[r]?.length ?? 0); c++) {
+      if (norm(rows[r][c]) !== "time card") continue;
+
+      const startCol = c;
+
+      const employeeName = rows[3]?.[startCol + 9];
+      const dateRangeText = rows[4]?.[startCol + 1];
+      const startDate = parseDateRangeStart(dateRangeText);
+
+      if (!employeeName || !startDate) continue;
+      if (!isLikelyPersonName(employeeName)) continue;
+
+      let dayStartRow: number | null = null;
+      for (let rr = r; rr < Math.min(r + 15, rows.length); rr++) {
+        const v = rows[rr]?.[startCol];
+        if (typeof v === "string" && v.trim().match(/^\d{1,2}\s+/)) {
+          dayStartRow = rr;
+          break;
+        }
+      }
+      if (dayStartRow == null) continue;
+
+      for (let rr = dayStartRow; rr < rows.length; rr++) {
+        const label = rows[rr]?.[startCol];
+        if (!label) break;
+        if (norm(label) === "time card") break;
+        if (typeof label !== "string") break;
+        const dayMatch = label.trim().match(/^(\d{1,2})/);
+        if (!dayMatch) break;
+        const dayNum = Number(dayMatch[1]);
+        if (!Number.isFinite(dayNum)) break;
+
+        const dateObj = new Date(startDate);
+        dateObj.setDate(dayNum);
+        const date = formatYMD(dateObj);
+
+        const bnIn = excelTimeToMinutes(rows[rr]?.[startCol + 1]);
+        const bnOut = excelTimeToMinutes(rows[rr]?.[startCol + 3]);
+        const anIn = excelTimeToMinutes(rows[rr]?.[startCol + 6]);
+        const anOut = excelTimeToMinutes(rows[rr]?.[startCol + 8]);
+        const otIn = excelTimeToMinutes(rows[rr]?.[startCol + 10]);
+        const otOut = excelTimeToMinutes(rows[rr]?.[startCol + 12]);
+
+        const totalMins = sumPairs([
+          { inMin: bnIn, outMin: bnOut },
+          { inMin: anIn, outMin: anOut },
+          { inMin: otIn, outMin: otOut },
+        ]);
+
+        const ins = [bnIn, anIn, otIn].filter((x): x is number => x != null);
+        const outs = [bnOut, anOut, otOut].filter((x): x is number => x != null);
+
+        const timeInMin = ins.length ? Math.min(...ins) : null;
+        const timeOutMin = outs.length ? Math.max(...outs) : null;
+
+        if (timeInMin != null || timeOutMin != null || totalMins > 0) {
+          out.push({
+            employeeName: String(employeeName).trim(),
+            date,
+            timeIn: minutesToHHMM(timeInMin),
+            timeOut: minutesToHHMM(timeOutMin),
+            totalHours: Math.round((totalMins / 60) * 100) / 100,
+            issues: [],
+            sourceLine: rr,
+          });
+        }
+      }
+    }
+  }
+
+  return { format: "excel", rows: out, warnings };
+}
+
 function detectAttendanceTemplate(lines: string[]) {
   const title = lines.some((line) => /employee attendance table/i.test(line));
   const timeCard = lines.some((line) => /before\s+noon/i.test(line));
-  return title && timeCard;
+  // Accept either the explicit title or the time card markers; previously too strict and could miss valid tables.
+  return title || timeCard;
 }
 
 function parseHeaderMeta(lines: string[]) {
@@ -255,6 +455,10 @@ function parseHeaderMeta(lines: string[]) {
     if (match) dept = match[1];
   }
 
+  if (!isLikelyName(name)) {
+    name = null;
+  }
+
   return { name, userId, dept, startDate, endDate, dateRangeLabel };
 }
 
@@ -263,6 +467,8 @@ function parseAttendanceRow(
   index: number,
   meta: ReturnType<typeof parseHeaderMeta>
 ): ParsedTimesheetRow | null {
+  if (!isLikelyName(meta.name)) return null;
+
   const match = line.match(/^\s*(\d{1,2})\s+(Mo|Tu|We|Th|Fr|Sa|Su)\b(.*)$/i);
   if (!match) return null;
 
@@ -469,6 +675,8 @@ function parseAttendanceSheetRow(
   index: number,
   meta: ReturnType<typeof parseSheetMeta>
 ): ParsedTimesheetRow | null {
+  if (!isLikelyName(meta.name)) return null;
+
   if (!row.length) return null;
 
   const first = stringOrNull(row[0]);
@@ -777,6 +985,11 @@ function findAttendanceBlocks(rows: (string | number | Date | undefined)[][]) {
           blocks.push({ headerRow: r, headerCol: c });
         }
       }
+
+      // Fallback: some attendance tables are labeled "Employee Attendance Table" without the "before noon" wording.
+      if (joined.includes("employee attendance table") && lower.includes("date")) {
+        blocks.push({ headerRow: r, headerCol: c });
+      }
     }
   }
   return blocks;
@@ -924,7 +1137,7 @@ function buildRow(
 }
 
 export function parseExcelTimesheet(buffer: Buffer): ParseResult {
-  const workbook = XLSX.read(buffer, { type: "buffer" });
+  const workbook = XLSX.read(buffer, { type: "buffer", cellDates: true });
   const sheetNames = workbook.SheetNames;
 
   if (!sheetNames.length) {
@@ -967,6 +1180,13 @@ export function parseExcelTimesheet(buffer: Buffer): ParseResult {
       return;
     }
 
+    const timeCardParsed = parseTimeCardBlocksSheet(rows);
+    if (timeCardParsed) {
+      aggregatedRows.push(...timeCardParsed.rows.map((r) => ({ ...r, sheetName })));
+      warnings.push(...timeCardParsed.warnings.map((w) => `${sheetName}: ${w}`));
+      return;
+    }
+
     // Shift setting table
     const shiftHeaderIndex = rows.findIndex((row) => {
       const text = row.map((cell) => stringOrNull(cell)?.toLowerCase() ?? "").join(" ");
@@ -986,9 +1206,14 @@ export function parseExcelTimesheet(buffer: Buffer): ParseResult {
     warnings.push(...generic.warnings.map((w) => `${sheetName}: ${w}`));
   });
 
+  const cleaned = aggregatedRows.filter((row) => {
+    const hasTime = (row.timeIn && row.timeIn.trim() !== "") || (row.timeOut && row.timeOut.trim() !== "") || (row.totalHours ?? 0) > 0;
+    return isLikelyPersonName(row.employeeName) && hasTime;
+  });
+
   return {
     format: "excel",
-    rows: aggregatedRows,
+    rows: cleaned,
     warnings,
   };
 }

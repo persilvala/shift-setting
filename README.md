@@ -1,36 +1,41 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+## Documentation
 
-## Getting Started
+### Overview
+This web app streamlines timesheet upload, parsing, and payroll computation. HR/Admin users can upload Excel, CSV, or PDF timesheets, review normalized rows, generate payroll, adjust amounts, and export payroll as CSV.
 
-First, run the development server:
+### Project Goal (kept)
+- Upload the existing timesheet template
+- Display the uploaded data in a dashboard view
+- Automatically compute salary based on the timesheet records
 
+### What’s in scope (implemented)
+- Upload Excel/CSV/PDF timesheets via `Timesheets`
+- Parse and normalize rows (deduplicated, limited preview shown)
+- Persist parsed rows in `sessionStorage` for use by payroll
+- Generate payroll (base pay + OT + auto additions/deductions)
+- Apply manual additions/deductions per employee
+- Export payroll CSV with source-file metadata
+
+### What’s out of scope / removed
+- User management, roles, and password flows
+- Persistent storage of attendance records
+- Advanced dashboards/analytics (totals, trends, filters)
+- Report builders beyond the payroll CSV export
+
+### System Flow
+1) Upload timesheet (Excel/CSV/PDF) on `Timesheets`
+2) Review parsed preview (rows stored in session)
+3) Go to `Payroll`, enter period and rates, generate payroll
+4) Optionally add per-employee adjustments
+5) Export payroll CSV (includes adjustments and source metadata)
+
+### Running locally
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+# open http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### Notes
+- Source file metadata (type, row count, uploaded time) is stored client-side and included in exports.
+- If no parsed timesheet data is present, payroll generation/export is disabled until you upload again.
