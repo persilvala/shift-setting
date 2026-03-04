@@ -143,6 +143,14 @@ export default function PayrollPage() {
       return;
     }
 
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) {
+      setError("Enter a valid date range (start on/before end).");
+      return;
+    }
+
     setLoading(true);
     setError(null);
 

@@ -12,7 +12,7 @@ type FilterState = {
 };
 
 const initialFilters: FilterState = {
-  employee: "all",
+  employee: "",
   dept: "all",
   startDate: "",
   endDate: "",
@@ -31,6 +31,16 @@ function getHours(row: ParsedTimesheetRow) {
     row.totalHours ??
     0
   );
+}
+
+function formatDateRange(dates: Set<string>) {
+  const unique = Array.from(dates).map((d) => new Date(d)).filter((d) => !Number.isNaN(d.getTime()));
+  if (!unique.length) return "—";
+  unique.sort((a, b) => a.getTime() - b.getTime());
+  const start = unique[0];
+  const end = unique[unique.length - 1];
+  const fmt = (d: Date) => d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return unique.length === 1 ? fmt(start) : `${fmt(start)} – ${fmt(end)}`;
 }
 
 export default function DashboardPage() {
@@ -61,7 +71,7 @@ export default function DashboardPage() {
     const end = asDate(filters.endDate || null);
 
     return rows.filter((row) => {
-      if (filters.employee !== "all" && row.employeeName !== filters.employee) return false;
+      if (filters.employee && !(row.employeeName || "").toLowerCase().includes(filters.employee.toLowerCase())) return false;
       if (filters.dept !== "all" && (row.dept || "") !== filters.dept) return false;
 
       if (start || end) {
@@ -136,6 +146,7 @@ export default function DashboardPage() {
         overtime: Math.round(data.overtime * 100) / 100,
         lateMinutes: data.lateMinutes,
         earlyMinutes: data.earlyMinutes,
+        dateLabel: formatDateRange(data.dates),
       }))
       .sort((a, b) => a.employeeName.localeCompare(b.employeeName));
 
@@ -190,18 +201,19 @@ export default function DashboardPage() {
           <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             <div>
               <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">Employee</label>
-              <select
+              <input
+                type="search"
                 value={filters.employee}
                 onChange={(e) => setFilters((f) => ({ ...f, employee: e.target.value }))}
+                list="employee-suggestions"
+                placeholder="Search employee"
                 className="mt-1 w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
-              >
-                <option value="all">All employees</option>
+              />
+              <datalist id="employee-suggestions">
                 {employees.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
+                  <option key={name} value={name} />
                 ))}
-              </select>
+              </datalist>
             </div>
             <div>
               <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">Department</label>
@@ -280,6 +292,8 @@ export default function DashboardPage() {
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Employee</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Dept</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Present</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Dates</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Present</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Leave</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Absent</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Hours</th>
@@ -300,6 +314,7 @@ export default function DashboardPage() {
                       <tr key={entry.employeeName} className="hover:bg-[var(--surface)]/60">
                         <td className="px-4 py-3 font-semibold text-[var(--foreground)]">{entry.employeeName}</td>
                         <td className="px-4 py-3 text-[var(--muted)]">{entry.dept || "—"}</td>
+                        <td className="px-4 py-3 text-[var(--muted)]">{entry.dateLabel}</td>
                         <td className="px-4 py-3 text-[var(--muted)]">{entry.presentDays}</td>
                         <td className="px-4 py-3 text-[var(--muted)]">{entry.leaveDays}</td>
                         <td className="px-4 py-3 text-[var(--muted)]">{entry.absenceDays}</td>
