@@ -287,7 +287,12 @@ function norm(value: unknown) {
 function excelTimeToMinutes(value: unknown): number | null {
   if (value == null || value === "") return null;
 
-  if (value instanceof Date) return value.getHours() * 60 + value.getMinutes();
+  if (value instanceof Date) {
+    const mins = value.getHours() * 60 + value.getMinutes();
+    const secs = value.getSeconds();
+    // Round up if 30 or more seconds
+    return secs >= 30 ? mins + 1 : mins;
+  }
 
   if (typeof value === "number") {
     const mins = Math.round(value * 24 * 60);
@@ -296,7 +301,12 @@ function excelTimeToMinutes(value: unknown): number | null {
 
   if (typeof value === "string") {
     const d = new Date(`2000-01-01 ${value.trim()}`);
-    if (!Number.isNaN(d.getTime())) return d.getHours() * 60 + d.getMinutes();
+    if (!Number.isNaN(d.getTime())) {
+      const mins = d.getHours() * 60 + d.getMinutes();
+      const secs = d.getSeconds();
+      // Round up if 30 or more seconds
+      return secs >= 30 ? mins + 1 : mins;
+    }
   }
 
   return null;
