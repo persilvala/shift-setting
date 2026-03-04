@@ -1,23 +1,32 @@
-import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 
-const PUBLIC_FILE = /\.(.*)$/;
-const PUBLIC_PATHS = ["/login", "/favicon.ico", "/_next/image", "/_next/static"];
+const AUTH_COOKIE = "demo-auth";
+const publicPaths = ["/login"];
+const protectedRoots = ["/dashboard", "/timesheets", "/payroll"];
 
 export function middleware(request: NextRequest) {
-  const { pathname } = request.nextUrl;
+  const { pathname, search } = request.nextUrl;
 
-  const isPublic =
-    PUBLIC_PATHS.some((path) => pathname.startsWith(path)) || PUBLIC_FILE.test(pathname);
+  if (pathname.startsWith("/_next") || pathname.startsWith("/api") || pathname === "/favicon.ico") {
+    return NextResponse.next();
+  }
 
-  if (isPublic) return NextResponse.next();
+  const hasAuth = Boolean(request.cookies.get(AUTH_COOKIE));
+  const isPublic = publicPaths.some((path) => pathname === path || pathname.startsWith(`${path}/`));
+  const isProtected = protectedRoots.some((path) => pathname === path || pathname.startsWith(`${path}/`));
 
-  const authed = request.cookies.get("demo-auth")?.value;
+  if (pathname === "/") {
+    return NextResponse.redirect(new URL(hasAuth ? "/dashboard" : "/login", request.url));
+  }
 
-  if (!authed) {
-    const loginUrl = request.nextUrl.clone();
-    loginUrl.pathname = "/login";
-    loginUrl.searchParams.set("next", pathname);
+  if (isPublic) {
+    return hasAuth ? NextResponse.redirect(new URL("/dashboard", request.url)) : NextResponse.next();
+  }
+
+  if (isProtected && !hasAuth) {
+    const loginUrl = new URL("/login", request.url);
+    loginUrl.searchParams.set("next", pathname + (search || ""));
     return NextResponse.redirect(loginUrl);
   }
 
@@ -25,5 +34,5 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: "/((?!api).*)",
+  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 };
