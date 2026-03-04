@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 
 const highlights = [
   "Live coverage heatmaps",
@@ -22,15 +22,23 @@ function LoginContent() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
+  const nextPath = searchParams.get("next") || "/dashboard";
+
+  useEffect(() => {
+    const hasSession = document.cookie.split("; ").some((item) => item.startsWith("demo-auth="));
+    if (hasSession) {
+      router.replace(nextPath);
+    }
+  }, [nextPath, router]);
+
   const handleLogin = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setLoading(true);
     setMessage(null);
     document.cookie = "demo-auth=1; path=/; max-age=86400";
-    const next = searchParams.get("next") || "/";
     setTimeout(() => {
       setMessage("Signed in. Redirecting…");
-      router.push(next);
+      router.push(nextPath);
     }, 250);
   };
 

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
 const navItems = [
-  { key: "overview", label: "Overview", href: "/" },
+  { key: "dashboard", label: "Dashboard", href: "/dashboard" },
   { key: "timesheets", label: "Timesheets", href: "/timesheets" },
   { key: "payroll", label: "Payroll", href: "/payroll" },
 ];
@@ -28,7 +28,7 @@ export function TopNav() {
         <div className="flex items-center gap-3">
           <ul className="flex items-center gap-2 sm:gap-3">
             {navItems.map((item) => {
-              const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+              const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
               return (
                 <li key={item.key}>
                   <Link
