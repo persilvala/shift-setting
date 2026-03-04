@@ -418,6 +418,30 @@ function parseTimeCardBlocksSheet(rows: (string | number | Date | undefined)[][]
       if (norm(rows[r][c]) !== "time card") continue;
 
       const startCol = c;
+      
+      // Extract User ID for this block (look in rows 3-4, same column offset as name)
+      let blockUserId: string | null = null;
+      const nameRow = rows[3];
+      if (nameRow) {
+        const nameIdx = nameRow.findIndex((cell) => norm(cell)?.toLowerCase() === "name");
+        if (nameIdx >= 0) {
+          // User ID is typically 2 columns before the name
+          const userIdIdx = nameIdx - 2;
+          if (userIdIdx >= 0 && nameRow[userIdIdx]) {
+            blockUserId = stringOrNull(nameRow[userIdIdx]);
+          }
+        }
+      }
+      // Alternative: look for "User ID" label in row 4
+      if (!blockUserId) {
+        const dateRow = rows[4];
+        if (dateRow) {
+          const userIdIdx = dateRow.findIndex((cell) => norm(cell)?.toLowerCase() === "user id");
+          if (userIdIdx >= 0 && dateRow[userIdIdx + 1]) {
+            blockUserId = stringOrNull(dateRow[userIdIdx + 1]);
+          }
+        }
+      }
 
       // Find weekday rows (rows that start with day number like "11 Mo", "12 Tu", etc.)
       for (let rr = r + 1; rr < Math.min(r + 20, rows.length); rr++) {
@@ -425,10 +449,10 @@ function parseTimeCardBlocksSheet(rows: (string | number | Date | undefined)[][]
         if (!label) continue;
         if (norm(label) === "time card") break;
         if (typeof label !== "string") continue;
-        
+
         const dayMatch = label.trim().match(/^(\d{1,2})\s+([A-Za-z]{2,3})/);
         if (!dayMatch) continue;
-        
+
         const dayNum = Number(dayMatch[1]);
         const weekday = dayMatch[2];
         if (!Number.isFinite(dayNum)) continue;
@@ -462,6 +486,7 @@ function parseTimeCardBlocksSheet(rows: (string | number | Date | undefined)[][]
         out.push({
           employeeName: employeeName.trim(),
           date,
+          userId: blockUserId ?? null,
           timeIn: timeInMin !== null ? minutesToHHMM(timeInMin) : null,
           timeOut: timeOutMin !== null ? minutesToHHMM(timeOutMin) : null,
           totalHours: totalMins > 0 ? Math.round((totalMins / 60) * 100) / 100 : null,
@@ -1345,22 +1370,65 @@ export function parseExcelTimesheet(buffer: Buffer): ParseResult {
   const cleaned = aggregatedRows.filter((row) => {
     // Keep rows with valid employee names
     if (!isLikelyPersonName(row.employeeName)) return false;
-    
+
     // For Time Card template rows, keep them even without time data (to show all weekdays)
     if (row.template === "time-card") return !!row.date;
-    
+
     // For other templates, require some time data
     const hasTime = (row.timeIn && row.timeIn.trim() !== "") || (row.timeOut && row.timeOut.trim() !== "") || (row.totalHours ?? 0) > 0;
     return hasTime;
   });
 
+  // Deduplicate Time Card rows: keep one row per employee+date+weekday, preferring rows with time data
+  const dedupMap = new Map<string, ParsedTimesheetRow>();
+  for (const row of cleaned) {
+    if (row.template === "time-card") {
+      // Use userId if available, otherwise fall back to employeeName
+      const identifier = row.userId || row.employeeName;
+      const key = `${identifier}|${row.date}|${row.weekday}`;
+      const existing = dedupMap.get(key);
+      if (!existing) {
+        dedupMap.set(key, row);
+      } else {
+        // Prefer row with more time data
+        const existingTimeCount = countTimeFields(existing);
+        const newRowCount = countTimeFields(row);
+        if (newRowCount > existingTimeCount) {
+          dedupMap.set(key, row);
+        }
+      }
+    } else {
+      // Non-time-card rows: use employee+date as key
+      const key = `other|${row.employeeName}|${row.date}`;
+      if (!dedupMap.has(key)) {
+        dedupMap.set(key, row);
+      }
+    }
+  }
+
+  const deduplicated = Array.from(dedupMap.values());
+
   return {
     format: "excel",
-    rows: cleaned,
+    rows: deduplicated,
     warnings,
     startDate,
     endDate,
   };
+}
+
+function countTimeFields(row: ParsedTimesheetRow): number {
+  let count = 0;
+  if (row.beforeNoonIn) count++;
+  if (row.beforeNoonOut) count++;
+  if (row.afterNoonIn) count++;
+  if (row.afterNoonOut) count++;
+  if (row.overtimeIn) count++;
+  if (row.overtimeOut) count++;
+  if (row.timeIn) count++;
+  if (row.timeOut) count++;
+  if (row.totalHours) count++;
+  return count;
 }
 
 // CSV uses the same parser; sheet_to_json handles csv buffers via XLSX.read.
