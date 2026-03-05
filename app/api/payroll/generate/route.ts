@@ -1,23 +1,7 @@
 import { NextResponse } from "next/server";
+import type { PayrollEntry } from "@/lib/types";
 
-export type PayrollEntry = {
-  userId: string;
-  employeeName: string;
-  department: string;
-  startDate: string;
-  endDate: string;
-  workDays: number;
-  workHours: number;
-  overtimeHours: number;
-  basePayPerDay: number;
-  basePay: number;
-  overtimePay: number;
-  additions: Array<{ description: string; amount: number }>;
-  deductions: Array<{ description: string; amount: number }>;
-  totalAdditions: number;
-  totalDeductions: number;
-  netPay: number;
-};
+export type { PayrollEntry } from "@/lib/types";
 
 type GeneratePayrollRequest = {
   startDate: string;

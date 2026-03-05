@@ -1,9 +1,8 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { TopNav } from "@/components/TopNav";
-import type { ParsedTimesheetRow } from "@/lib/timesheetParser";
-import type { PayrollEntry } from "@/app/api/payroll/generate/route";
+import { TopNav } from "@/components/layout/TopNav";
+import type { ParsedTimesheetRow, PayrollEntry, TimesheetMeta, Adjustment, SavedPayroll } from "@/lib/types";
 
 type PayrollData = {
   payroll: PayrollEntry[];
@@ -11,26 +10,6 @@ type PayrollData = {
   endDate: string;
   basePayPerDay: number;
   overtimeRatePerHour: number;
-};
-
-type Adjustment = { addition: number; deduction: number };
-
-type TimesheetMeta = {
-  format?: "excel" | "pdf";
-  totalRows?: number;
-  uploadedAt?: string;
-  timesheetId?: string;
-};
-
-type SavedPayroll = {
-  id: string;
-  startDate: string;
-  endDate: string;
-  basePayPerDay: number;
-  overtimeRate: number;
-  totalNetPay: number;
-  generatedAt: string;
-  _count: { entries: number };
 };
 
 export default function PayrollPage() {
@@ -91,7 +70,7 @@ export default function PayrollPage() {
     if (!payrollData) return 0;
     return payrollData.payroll.reduce((sum, entry) => {
       const adj = adjustments[entry.userId] ?? { addition: 0, deduction: 0 };
-      return sum + entry.netPay + adj.addition - adj.deduction;
+      return sum + entry.netPay + (adj.addition ?? 0) - (adj.deduction ?? 0);
     }, 0);
   }, [adjustments, payrollData]);
 
@@ -463,7 +442,7 @@ export default function PayrollPage() {
                   <tbody className="divide-y divide-[var(--border)]/70 text-[var(--foreground)]">
                     {payrollData.payroll.map((entry) => {
                       const adj = adjustments[entry.userId] ?? { addition: 0, deduction: 0 };
-                      const adjustedNet = entry.netPay + adj.addition - adj.deduction;
+                      const adjustedNet = entry.netPay + (adj.addition ?? 0) - (adj.deduction ?? 0);
                       return (
                         <tr key={entry.userId} className="hover:bg-[var(--surface)]/60">
                           <td className="px-4 py-3">

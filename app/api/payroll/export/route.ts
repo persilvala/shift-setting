@@ -1,13 +1,5 @@
 import { NextResponse } from "next/server";
-import type { PayrollEntry } from "@/app/api/payroll/generate/route";
-
-type Adjustment = { addition?: number; deduction?: number };
-
-type TimesheetMeta = {
-  format?: "excel" | "pdf";
-  totalRows?: number;
-  uploadedAt?: string;
-};
+import type { PayrollEntry, Adjustment, TimesheetMeta } from "@/lib/types";
 
 type ExportPayload = {
   payroll?: PayrollEntry[];

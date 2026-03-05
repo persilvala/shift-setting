@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import type { ParsedTimesheetRow } from "@/lib/timesheetParser";
+import type { ParsedTimesheetRow, TimesheetMeta } from "@/lib/types";
 
 type UploadSuccess = {
   ok: true;

@@ -1,5 +1,5 @@
-import { TopNav } from "@/components/TopNav";
-import { TimesheetUpload } from "@/components/TimesheetUpload";
+import { TopNav } from "@/components/layout/TopNav";
+import { TimesheetUpload } from "@/components/timesheets/TimesheetUpload";
 
 export default function TimesheetsPage() {
   return (

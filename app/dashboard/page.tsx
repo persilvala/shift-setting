@@ -1,14 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { TopNav } from "@/components/TopNav";
-import type { ParsedTimesheetRow } from "@/lib/timesheetParser";
+import { TopNav } from "@/components/layout/TopNav";
+import type { ParsedTimesheetRow, DashboardRow, FilterState } from "@/lib/types";
 
-type FilterState = {
-  employee: string;
-  dept: string;
-  startDate: string;
-  endDate: string;
+const initialFilters: FilterState = {
+  employee: "",
+  dept: "all",
+  startDate: "",
+  endDate: "",
 };
 
 type TimesheetWithRows = {
@@ -19,28 +19,7 @@ type TimesheetWithRows = {
   endDate: string;
   totalRows: number;
   uploadedAt: string;
-  rows: Array<{
-    employeeName: string;
-    userId: string | null;
-    date: string;
-    weekday: string | null;
-    dept: string | null;
-    totalHours: number | null;
-    workHours: number | null;
-    workHoursActual: number | null;
-    overtimeHours: number | null;
-    lateMinutes: number | null;
-    earlyMinutes: number | null;
-    absenceDays: number | null;
-    leaveDays: number | null;
-  }>;
-};
-
-const initialFilters: FilterState = {
-  employee: "",
-  dept: "all",
-  startDate: "",
-  endDate: "",
+  rows: DashboardRow[];
 };
 
 function asDate(value: string | null): Date | null {
@@ -69,22 +48,6 @@ function formatDateRange(dates: Set<string>) {
   const fmt = (d: Date) => d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
   return unique.length === 1 ? fmt(start) : `${fmt(start)} – ${fmt(end)}`;
 }
-
-type DashboardRow = {
-  employeeName: string;
-  userId: string | null;
-  date: string;
-  weekday: string | null;
-  dept: string | null;
-  totalHours: number | null;
-  workHours: number | null;
-  workHoursActual: number | null;
-  overtimeHours: number | null;
-  lateMinutes: number | null;
-  earlyMinutes: number | null;
-  absenceDays: number | null;
-  leaveDays: number | null;
-};
 
 export default function DashboardPage() {
   const [rows, setRows] = useState<ParsedTimesheetRow[]>([]);

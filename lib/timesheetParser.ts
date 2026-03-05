@@ -1,50 +1,8 @@
 import * as XLSX from "xlsx";
 import { PDFParse } from "pdf-parse";
+import type { ParsedTimesheetRow } from "@/lib/types";
 
-export type ParsedTimesheetRow = {
-  employeeName: string;
-  date: string | null;
-  timeIn: string | null;
-  timeOut: string | null;
-  totalHours: number | null;
-  issues: string[];
-  sourceLine: number;
-  sheetName?: string;
-  weekday?: string | null;
-  dept?: string | null;
-  userId?: string | null;
-  template?: string | null;
-  raw?: string[];
-  // Time card fields (Before Noon, After Noon, Overtime)
-  beforeNoonIn?: string | null;
-  beforeNoonOut?: string | null;
-  afterNoonIn?: string | null;
-  afterNoonOut?: string | null;
-  overtimeIn?: string | null;
-  overtimeOut?: string | null;
-  // Payroll fields
-  workHours?: number | null;
-  workHoursActual?: number | null;
-  overtimeHours?: number | null;
-  overtimeHoliday?: number | null;
-  lateCount?: number | null;
-  lateMinutes?: number | null;
-  earlyCount?: number | null;
-  earlyMinutes?: number | null;
-  workDays?: string | null;
-  tripDays?: number | null;
-  absenceDays?: number | null;
-  leaveDays?: number | null;
-  shiftCode?: string | null;
-  // Additional pay fields
-  addPayNormal?: number | null;
-  addPayOvertime?: number | null;
-  addPayAllowance?: number | null;
-  leavePayLateEarly?: number | null;
-  leavePayNoPaid?: number | null;
-  payrollDeduction?: number | null;
-  remark?: string | null;
-};
+export type { ParsedTimesheetRow } from "@/lib/types";
 
 type NormalizedField = "employeeName" | "date" | "timeIn" | "timeOut" | "hours";
 

@@ -1,18 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import type { PayrollEntry } from "@/lib/types";
 
-type PayrollEntry = {
-  userId: string;
-  employeeName: string;
-  department: string;
-  workDays: number;
-  workHours: number;
-  overtimeHours: number;
-  basePay: number;
-  overtimePay: number;
-  totalAdditions: number;
-  totalDeductions: number;
-  netPay: number;
+type PayrollEntryWithManual = PayrollEntry & {
   manualAddition?: number;
   manualDeduction?: number;
 };
@@ -22,7 +12,7 @@ type SavePayrollRequest = {
   endDate: string;
   basePayPerDay: number;
   overtimeRate: number;
-  payroll: PayrollEntry[];
+  payroll: PayrollEntryWithManual[];
   timesheetId?: string;
 };
 
