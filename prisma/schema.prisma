@@ -1,0 +1,93 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Timesheet {
+  id         String         @id @default(cuid())
+  fileName   String
+  format     String
+  startDate  DateTime
+  endDate    DateTime
+  totalRows  Int
+  uploadedAt DateTime       @default(now())
+  rows       TimesheetRow[]
+
+  @@index([uploadedAt])
+}
+
+model TimesheetRow {
+  id               String    @id @default(cuid())
+  timesheetId      String
+  employeeName     String
+  userId           String?
+  date             DateTime
+  weekday          String?
+  dept             String?
+  beforeNoonIn     String?
+  beforeNoonOut    String?
+  afterNoonIn      String?
+  afterNoonOut     String?
+  overtimeIn       String?
+  overtimeOut      String?
+  totalHours       Float?
+  lateMinutes      Int?
+  earlyMinutes     Int?
+  workHours        Float?
+  workHoursActual  Float?
+  overtimeHours    Float?
+  workDays         String?
+  tripDays         Float?
+  absenceDays      Float?
+  leaveDays        Float?
+  addPayNormal     Float?
+  addPayOvertime   Float?
+  addPayAllowance  Float?
+  payrollDeduction Float?
+  shiftCode        String?
+  remark           String?
+  createdAt        DateTime  @default(now())
+  timesheet        Timesheet @relation(fields: [timesheetId], references: [id], onDelete: Cascade)
+
+  @@index([timesheetId])
+  @@index([employeeName])
+  @@index([date])
+}
+
+model Payroll {
+  id            String         @id @default(cuid())
+  startDate     DateTime
+  endDate       DateTime
+  basePayPerDay Float
+  overtimeRate  Float
+  totalNetPay   Float
+  generatedAt   DateTime       @default(now())
+  entries       PayrollEntry[]
+
+  @@index([generatedAt])
+}
+
+model PayrollEntry {
+  id              String   @id @default(cuid())
+  payrollId       String
+  employeeName    String
+  employeeUserId  String?
+  department      String?
+  workDays        Int
+  workHours       Float
+  overtimeHours   Float
+  basePay         Float
+  overtimePay     Float
+  totalAdditions  Float
+  totalDeductions Float
+  netPay          Float
+  manualAddition  Float    @default(0)
+  manualDeduction Float    @default(0)
+  createdAt       DateTime @default(now())
+  payroll         Payroll  @relation(fields: [payrollId], references: [id], onDelete: Cascade)
+
+  @@index([payrollId])
+}

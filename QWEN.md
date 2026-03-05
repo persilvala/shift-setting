@@ -1,129 +1,270 @@
-# Shift Setting Console - Project Context
+# Shift Setting - Project Documentation
 
 ## Project Overview
 
-A **Next.js 16** web application for HR/Admin users to streamline timesheet upload, parsing, and payroll computation. The app allows uploading Excel, CSV, or PDF timesheets, reviewing normalized data, generating payroll with manual adjustments, and exporting results as CSV.
+**Shift Setting** is a Next.js web application that streamlines timesheet upload, parsing, and payroll computation. It enables HR/Admin users to upload Excel, CSV, or PDF timesheets, review normalized data, generate payroll with automatic calculations, and export payroll reports as CSV.
 
 ### Core Features
-- **Timesheet Upload**: Parse Excel (.xlsx/.xls), CSV, or PDF timesheets via `/timesheets`
-- **Data Normalization**: Deduplicate and normalize rows from various template formats
-- **Dashboard**: View attendance summaries with filtering by employee, department, and date range
-- **Payroll Generation**: Compute salaries based on work days, hours, overtime, and auto-additions/deductions
-- **Manual Adjustments**: Apply per-employee additions or deductions before export
-- **CSV Export**: Export payroll with source-file metadata included
+
+- **Timesheet Upload**: Support for Excel (.xlsx), CSV, and PDF formats via drag-and-drop
+- **Intelligent Parsing**: Automatic normalization of timesheet data with format detection
+- **Payroll Generation**: Compute base pay, overtime, and apply manual adjustments per employee
+- **CSV Export**: Export payroll data with source file metadata
+- **Session-based Storage**: Parsed data persisted in `sessionStorage` between pages
 
 ### Tech Stack
-| Category | Technology |
-|----------|------------|
-| Framework | Next.js 16.1.6 (App Router, Turbopack) |
+
+| Layer | Technology |
+|-------|------------|
+| Framework | Next.js 16.1.6 (App Router) |
 | Frontend | React 19.2.3, TypeScript 5 |
-| Styling | Tailwind CSS 4, CSS variables for theming |
-| Parsing | `xlsx` 0.18.5, `pdf-parse` 2.4.5 |
-| Export | `jspdf` 4.2.0, `jspdf-autotable` 5.0.7 |
-| Linting | ESLint 9 with Next.js configs |
+| Styling | Tailwind CSS 4 |
+| Database | PostgreSQL with Prisma ORM 6.0.0 |
+| File Parsing | `xlsx` (Excel), `pdf-parse` (PDF), `jspdf` (export) |
 
-## Project Structure
-
-```
-shift-setting/
-├── app/                      # Next.js App Router pages and API routes
-│   ├── api/                  # API endpoints
-│   │   ├── payroll/          # Payroll generation and export
-│   │   ├── timesheets/       # Timesheet upload and parsing
-│   │   └── login/            # Authentication endpoint
-│   ├── login/                # Login page
-│   ├── payroll/              # Payroll computation page
-│   ├── timesheets/           # Timesheet upload page
-│   ├── layout.tsx            # Root layout with fonts and theming
-│   └── page.tsx              # Dashboard/Overview page
-├── components/               # Reusable React components
-│   ├── TopNav.tsx            # Top navigation bar
-│   ├── BottomNav.tsx         # Bottom navigation (unused in main flow)
-│   └── TimesheetUpload.tsx   # File upload and preview component
-├── lib/                      # Core business logic
-│   ├── timesheetParser.ts    # Multi-format timesheet parsing logic
-│   └── timesheetData.ts      # Static sample data (legacy)
-├── middleware.ts             # Auth middleware (cookie-based demo auth)
-├── next.config.ts            # Next.js configuration
-├── tsconfig.json             # TypeScript configuration
-└── package.json              # Dependencies and scripts
-```
+---
 
 ## Building and Running
 
-### Development
+### Prerequisites
+
+- Node.js 20+
+- PostgreSQL database (update `.env` with connection string)
+
+### Installation
+
 ```bash
 npm install
+```
+
+### Development
+
+```bash
 npm run dev
 # Opens http://localhost:3000
 ```
 
 ### Production Build
+
 ```bash
 npm run build
 npm run start
 ```
 
 ### Linting
+
 ```bash
 npm run lint
+npm run lint -- --fix  # Auto-fix issues
 ```
 
-## Key Conventions
+### Database Setup
 
-### Code Style
-- **TypeScript**: Strict mode enabled, ES2017 target
-- **Module Resolution**: `bundler` strategy with path alias `@/*` → `./*`
-- **Components**: All page components use `"use client"` for interactivity where needed
-- **Naming**: PascalCase for components/types, camelCase for variables/functions
+```bash
+# Run Prisma migrations
+npx prisma migrate dev
 
-### Data Flow
-1. **Upload** → `/api/timesheets/upload` parses file and returns normalized rows
-2. **Storage** → Parsed rows stored in `sessionStorage` (client-side only)
-3. **Payroll** → `/api/payroll/generate` computes salaries from aggregated data
-4. **Export** → `/api/payroll/export` generates CSV with adjustments included
+# Generate Prisma client
+npx prisma generate
+```
 
-### Authentication
-- Demo cookie-based auth (`demo-auth`) via middleware
-- Login redirects to requested path after successful sign-in
-- Middleware excludes `/api` routes and public files
+---
 
-### Parser Architecture (`lib/timesheetParser.ts`)
-The parser supports multiple timesheet templates:
-- **Attendance Statistic** template
-- **Attendance Template** (standard format)
-- **Time Card** blocks
-- **Shift Code** template
-- **Generic mapped** sheets
+## Project Structure
 
-Key types:
+```
+shift-setting/
+├── app/                    # Next.js App Router pages
+│   ├── api/                # API routes
+│   │   ├── export/         # Payroll CSV export
+│   │   ├── login/          # Authentication
+│   │   ├── payroll/        # Payroll generation
+│   │   └── timesheets/     # Timesheet upload API
+│   ├── dashboard/          # Main dashboard view
+│   ├── login/              # Login page
+│   ├── payroll/            # Payroll management
+│   └── timesheets/         # Timesheet upload & review
+├── components/             # React components
+│   ├── BottomNav.tsx       # Bottom navigation
+│   ├── TimesheetUpload.tsx # File upload component
+│   └── TopNav.tsx          # Top navigation bar
+├── lib/                    # Business logic
+│   ├── db.ts               # Prisma client singleton
+│   ├── timesheetData.ts    # Session storage helpers
+│   └── timesheetParser.ts  # Excel/PDF parsing logic
+├── prisma/
+│   ├── schema.prisma       # Database schema
+│   └── migrations/         # Prisma migrations
+└── public/                 # Static assets
+```
+
+---
+
+## Key Modules
+
+### Timesheet Parser (`lib/timesheetParser.ts`)
+
+Parses uploaded timesheets into normalized rows:
+
 ```typescript
-ParsedTimesheetRow {
-  employeeName, date, timeIn, timeOut, totalHours,
-  workHours, overtimeHours, lateMinutes, earlyMinutes,
-  addPayNormal, addPayOvertime, addPayAllowance,
-  payrollDeduction, dept, userId, shiftCode, ...
-}
+type ParsedTimesheetRow = {
+  employeeName: string;
+  date: string | null;
+  timeIn: string | null;
+  timeOut: string | null;
+  totalHours: number | null;
+  issues: string[];
+  sourceLine: number;
+  // Time card fields
+  beforeNoonIn?: string | null;
+  beforeNoonOut?: string | null;
+  afterNoonIn?: string | null;
+  afterNoonOut?: string | null;
+  overtimeIn?: string | null;
+  overtimeOut?: string | null;
+  // Payroll fields
+  workHours?: number | null;
+  overtimeHours?: number | null;
+  lateMinutes?: number | null;
+  // ... more fields
+};
 ```
 
-## API Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/timesheets/upload` | Upload and parse timesheet file |
-| POST | `/api/payroll/generate` | Generate payroll from timesheet data |
-| POST | `/api/payroll/export` | Export payroll as CSV |
-| POST | `/api/login` | Demo authentication |
-
-## Session Storage Keys
+### Session Storage Keys
 
 | Key | Content |
 |-----|---------|
 | `timesheetData` | Array of `ParsedTimesheetRow` |
-| `timesheetMeta` | `{ format, totalRows, uploadedAt }` |
+| `timesheetMeta` | `{ format, totalRows, uploadedAt, startDate, endDate }` |
+
+### Database Models (Prisma)
+
+- **Timesheet**: Uploaded file metadata
+- **TimesheetRow**: Individual parsed row data
+- **Payroll**: Generated payroll batch
+- **PayrollEntry**: Per-employee payroll calculations
+
+---
+
+## Development Conventions
+
+### TypeScript
+
+- Strict mode enabled (`strict: true`)
+- Always define explicit return types
+- Use `interface` for object shapes, `type` for unions
+- Use `Record<K, T>` for dictionary types
+- Path alias `@/*` maps to project root
+
+```typescript
+// Good
+function parseDate(value: unknown): string | null { }
+
+interface ParsedTimesheetRow {
+  employeeName: string;
+  date: string | null;
+}
+```
+
+### React/Next.js
+
+- `"use client"` directive for interactive components (useState, onClick)
+- Server components by default
+- Use `sessionStorage` for client-side persistence
+- Next.js App Router conventions
+
+### Naming Conventions
+
+| Type | Convention | Example |
+|------|------------|---------|
+| Components | PascalCase | `TimesheetUpload.tsx` |
+| Types/Interfaces | PascalCase | `ParsedTimesheetRow` |
+| Functions/Variables | camelCase | `parseExcelTimesheet` |
+| Constants | SCREAMING_SNAKE_CASE | `REQUIRED_FIELDS` |
+
+### Imports Order
+
+```typescript
+import { useState } from "react";           // External libraries
+import * as XLSX from "xlsx";
+import type { ParsedTimesheetRow } from "@/lib/timesheetParser";  // Internal
+```
+
+### Formatting
+
+- 2-space indentation
+- Double quotes for strings
+- Trailing commas in multiline objects/arrays
+- Semicolons required
+- Max line length: 100 characters (soft limit)
+
+### Error Handling
+
+Use try/catch for async operations and return typed error responses:
+
+```typescript
+return NextResponse.json(
+  { error: "Failed to parse timesheet", details: error.message },
+  { status: 400 }
+);
+```
+
+### API Routes
+
+- Place in `app/api/` directory
+- Use `NextResponse` for responses
+- Define explicit return types
+
+```typescript
+import { NextResponse } from "next/server";
+
+export async function POST(request: Request) {
+  try {
+    const body = await request.json();
+    return NextResponse.json({ success: true, data });
+  } catch (error) {
+    return NextResponse.json({ error: "Invalid request" }, { status: 400 });
+  }
+}
+```
+
+---
+
+## System Flow
+
+1. **Upload**: User uploads timesheet (Excel/CSV/PDF) on `/timesheets`
+2. **Parse**: File is parsed and normalized; preview shown
+3. **Store**: Parsed rows stored in `sessionStorage`
+4. **Generate**: Navigate to `/payroll`, enter period/rates, generate payroll
+5. **Adjust**: Optionally add per-employee manual adjustments
+6. **Export**: Download payroll CSV with source metadata
+
+---
+
+## Environment Variables
+
+```env
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/shift_setting?schema=public"
+```
+
+---
+
+## Testing
+
+No test framework is currently configured. If tests are added:
+
+```bash
+# Jest
+npm test -- --testPathPattern=filename
+
+# Vitest
+npm run test -- filename
+```
+
+---
 
 ## Notes
-- No persistent database; all data is client-side session storage
-- Source file metadata (format, row count, upload time) included in exports
-- Dashboard aggregates unique dates for present-day counts
-- Payroll uses work days from timesheet (parsed as `N/M` format)
+
+- Source file metadata (type, row count, upload time) is stored client-side
+- Payroll generation is disabled if no parsed timesheet data exists
+- Authentication uses a simple cookie-based demo auth (`demo-auth` cookie)

@@ -19,15 +19,30 @@ type TimesheetMeta = {
   format?: "excel" | "pdf";
   totalRows?: number;
   uploadedAt?: string;
+  timesheetId?: string;
+};
+
+type SavedPayroll = {
+  id: string;
+  startDate: string;
+  endDate: string;
+  basePayPerDay: number;
+  overtimeRate: number;
+  totalNetPay: number;
+  generatedAt: string;
+  _count: { entries: number };
 };
 
 export default function PayrollPage() {
   const [timesheetData, setTimesheetData] = useState<ParsedTimesheetRow[]>([]);
   const [timesheetMeta, setTimesheetMeta] = useState<TimesheetMeta | null>(null);
   const [payrollData, setPayrollData] = useState<PayrollData | null>(null);
+  const [savedPayrolls, setSavedPayrolls] = useState<SavedPayroll[]>([]);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -55,7 +70,22 @@ export default function PayrollPage() {
         setTimesheetMeta(null);
       }
     }
+
+    // Fetch saved payrolls from database
+    fetchSavedPayrolls();
   }, []);
+
+  const fetchSavedPayrolls = async () => {
+    try {
+      const response = await fetch("/api/payroll");
+      const data = await response.json();
+      if (data.payrolls) {
+        setSavedPayrolls(data.payrolls);
+      }
+    } catch (err) {
+      console.error("Failed to fetch saved payrolls:", err);
+    }
+  };
 
   const totalNetPay = useMemo(() => {
     if (!payrollData) return 0;
@@ -191,6 +221,55 @@ export default function PayrollPage() {
     }
   };
 
+  const handleSavePayroll = async () => {
+    if (!payrollData) {
+      setError("Generate payroll first before saving.");
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const payrollWithAdjustments = payrollData.payroll.map((entry) => {
+        const adj = adjustments[entry.userId] ?? { addition: 0, deduction: 0 };
+        return {
+          ...entry,
+          manualAddition: adj.addition,
+          manualDeduction: adj.deduction,
+        };
+      });
+
+      const response = await fetch("/api/payroll", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          startDate: payrollData.startDate,
+          endDate: payrollData.endDate,
+          basePayPerDay: payrollData.basePayPerDay,
+          overtimeRate: payrollData.overtimeRatePerHour,
+          payroll: payrollWithAdjustments,
+          timesheetId: timesheetMeta?.timesheetId,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok || !result.ok) {
+        setError(result.error ?? "Failed to save payroll");
+        return;
+      }
+
+      setSuccess("Payroll saved to database successfully!");
+      fetchSavedPayrolls();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save payroll");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleExportCsv = async () => {
     if (!payrollData) {
       setError("Generate payroll before exporting.");
@@ -319,7 +398,17 @@ export default function PayrollPage() {
             >
               {loading ? "Generating…" : "Generate payroll summary"}
             </button>
+            {payrollData && (
+              <button
+                onClick={handleSavePayroll}
+                disabled={saving}
+                className="inline-flex items-center gap-2 rounded-xl border border-[var(--accent)] bg-[var(--accent)]/10 px-5 py-3 text-sm font-semibold text-[var(--accent)] transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {saving ? "Saving…" : "Save to database"}
+              </button>
+            )}
             {error && <span className="text-sm font-semibold text-red-600">{error}</span>}
+            {success && <span className="text-sm font-semibold text-emerald-600">{success}</span>}
           </div>
         </section>
 
@@ -409,6 +498,51 @@ export default function PayrollPage() {
                         </tr>
                       );
                     })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {savedPayrolls.length > 0 && (
+          <section className="rounded-3xl border border-[var(--border)] bg-[var(--panel)]/90 p-6 shadow-[0_24px_70px_rgba(16,40,94,0.1)]">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.26em] text-[var(--muted)]">Saved payrolls</p>
+                <h3 className="text-xl font-semibold text-[var(--foreground)]">From database</h3>
+                <p className="text-sm text-[var(--muted)]">Previously generated and saved payroll records.</p>
+              </div>
+            </div>
+
+            <div className="mt-5 overflow-hidden rounded-2xl border border-[var(--border)] bg-white/90 shadow-[0_12px_32px_rgba(16,40,94,0.06)]">
+              <div className="overflow-x-auto">
+                <table className="min-w-[600px] w-full text-sm">
+                  <thead className="bg-[var(--surface)] text-[var(--muted)]">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Period</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Generated</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Entries</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Base Pay/Day</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">OT Rate/Hour</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Total Net</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--border)]/70 text-[var(--foreground)]">
+                    {savedPayrolls.map((payroll) => (
+                      <tr key={payroll.id} className="hover:bg-[var(--surface)]/60">
+                        <td className="px-4 py-3 font-semibold text-[var(--foreground)]">
+                          {new Date(payroll.startDate).toLocaleDateString()} – {new Date(payroll.endDate).toLocaleDateString()}
+                        </td>
+                        <td className="px-4 py-3 text-[var(--muted)]">
+                          {new Date(payroll.generatedAt).toLocaleString()}
+                        </td>
+                        <td className="px-4 py-3 text-[var(--muted)]">{payroll._count.entries}</td>
+                        <td className="px-4 py-3 text-[var(--muted)]">{formatMoney(payroll.basePayPerDay)}</td>
+                        <td className="px-4 py-3 text-[var(--muted)]">{formatMoney(payroll.overtimeRate)}</td>
+                        <td className="px-4 py-3 font-bold text-[var(--accent)]">{formatMoney(payroll.totalNetPay)}</td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>

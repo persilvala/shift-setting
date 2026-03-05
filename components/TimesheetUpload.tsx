@@ -11,6 +11,7 @@ type UploadSuccess = {
   warnings: string[];
   startDate?: string | null;
   endDate?: string | null;
+  timesheetId?: string;
 };
 
 type UploadError = { ok: false; error: string };
@@ -98,8 +99,12 @@ export function TimesheetUpload() {
           uploadedAt: new Date().toISOString(),
           startDate: data.startDate,
           endDate: data.endDate,
+          timesheetId: data.timesheetId,
         })
       );
+
+      // Notify dashboard to refresh
+      window.dispatchEvent(new CustomEvent('timesheet-updated'));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unexpected error");
     } finally {

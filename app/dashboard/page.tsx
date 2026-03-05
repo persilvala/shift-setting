@@ -11,6 +11,31 @@ type FilterState = {
   endDate: string;
 };
 
+type TimesheetWithRows = {
+  id: string;
+  fileName: string;
+  format: string;
+  startDate: string;
+  endDate: string;
+  totalRows: number;
+  uploadedAt: string;
+  rows: Array<{
+    employeeName: string;
+    userId: string | null;
+    date: string;
+    weekday: string | null;
+    dept: string | null;
+    totalHours: number | null;
+    workHours: number | null;
+    workHoursActual: number | null;
+    overtimeHours: number | null;
+    lateMinutes: number | null;
+    earlyMinutes: number | null;
+    absenceDays: number | null;
+    leaveDays: number | null;
+  }>;
+};
+
 const initialFilters: FilterState = {
   employee: "",
   dept: "all",
@@ -24,10 +49,12 @@ function asDate(value: string | null): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
-function getHours(row: ParsedTimesheetRow) {
+function getHours(row: ParsedTimesheetRow | TimesheetWithRows["rows"][0]) {
   return (
-    row.workHoursActual ??
-    row.workHours ??
+    (row as ParsedTimesheetRow).workHoursActual ??
+    (row as ParsedTimesheetRow).workHours ??
+    (row as TimesheetWithRows["rows"][0]).workHoursActual ??
+    (row as TimesheetWithRows["rows"][0]).workHours ??
     row.totalHours ??
     0
   );
@@ -43,12 +70,108 @@ function formatDateRange(dates: Set<string>) {
   return unique.length === 1 ? fmt(start) : `${fmt(start)} – ${fmt(end)}`;
 }
 
+type DashboardRow = {
+  employeeName: string;
+  userId: string | null;
+  date: string;
+  weekday: string | null;
+  dept: string | null;
+  totalHours: number | null;
+  workHours: number | null;
+  workHoursActual: number | null;
+  overtimeHours: number | null;
+  lateMinutes: number | null;
+  earlyMinutes: number | null;
+  absenceDays: number | null;
+  leaveDays: number | null;
+};
+
 export default function DashboardPage() {
   const [rows, setRows] = useState<ParsedTimesheetRow[]>([]);
+  const [dbRows, setDbRows] = useState<DashboardRow[]>([]);
   const [filters, setFilters] = useState<FilterState>(initialFilters);
+  const [loading, setLoading] = useState(true);
+  const [dataSource, setDataSource] = useState<"database" | "session">("session");
+  const [refreshing, setRefreshing] = useState(false);
+
+  const refreshData = async () => {
+    setRefreshing(true);
+    try {
+      const response = await fetch("/api/timesheets");
+      const data = await response.json();
+
+      if (data.timesheets && data.timesheets.length > 0) {
+        const allTimesheets = await Promise.all(
+          data.timesheets.map(async (ts: { id: string }) => {
+            const detailResponse = await fetch(`/api/timesheets/${ts.id}`);
+            const detailData = await detailResponse.json();
+            return detailData.timesheet;
+          })
+        );
+
+        const combinedRows = allTimesheets.flatMap((ts: { rows: DashboardRow[] }) => ts.rows);
+        setDbRows(combinedRows);
+        setDataSource("database");
+        console.log('[Dashboard] Refreshed', combinedRows.length, 'total rows from all timesheets');
+      }
+    } catch (err) {
+      console.error('[Dashboard] Failed to refresh:', err);
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   useEffect(() => {
+    // Fetch ALL timesheets from database and combine rows
+    const fetchFromDatabase = async () => {
+      try {
+        console.log('[Dashboard] Fetching all timesheets from database...');
+        const response = await fetch("/api/timesheets");
+        const data = await response.json();
+        console.log('[Dashboard] Timesheets API response:', data);
+
+        if (data.timesheets && data.timesheets.length > 0) {
+          console.log('[Dashboard] Found', data.timesheets.length, 'timesheets');
+
+          // Fetch all timesheets and combine their rows
+          const allTimesheets = await Promise.all(
+            data.timesheets.map(async (ts: { id: string }) => {
+              const detailResponse = await fetch(`/api/timesheets/${ts.id}`);
+              const detailData = await detailResponse.json();
+              return detailData.timesheet;
+            })
+          );
+
+          // Combine all rows from all timesheets
+          const combinedRows = allTimesheets.flatMap((ts: { rows: DashboardRow[] }) => ts.rows);
+          console.log('[Dashboard] Combined', combinedRows.length, 'total rows from all timesheets');
+
+          setDbRows(combinedRows);
+          setDataSource("database");
+          console.log('[Dashboard] dataSource set to: database');
+        } else {
+          console.log('[Dashboard] No timesheets found in database');
+        }
+      } catch (err) {
+        console.error('[Dashboard] Failed to fetch from database:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchFromDatabase();
+
+    // Listen for timesheet updates
+    const handleTimesheetUpdated = () => {
+      console.log('[Dashboard] Timesheet updated, refreshing...');
+      fetchFromDatabase();
+    };
+
+    window.addEventListener('timesheet-updated', handleTimesheetUpdated);
+
+    // Also check session storage for compatibility
     const stored = sessionStorage.getItem("timesheetData");
+    console.log('[Dashboard] SessionStorage data:', stored ? JSON.parse(stored).length : 0, 'rows');
     if (!stored) return;
     try {
       const parsed = JSON.parse(stored) as ParsedTimesheetRow[];
@@ -56,21 +179,27 @@ export default function DashboardPage() {
     } catch {
       setRows([]);
     }
+
+    return () => {
+      window.removeEventListener('timesheet-updated', handleTimesheetUpdated);
+    };
   }, []);
 
+  const activeRows: DashboardRow[] = dbRows.length > 0 ? dbRows : (rows as DashboardRow[]);
+
   const employees = useMemo(() => {
-    return Array.from(new Set(rows.map((r) => r.employeeName).filter(Boolean))).sort((a, b) => a.localeCompare(b));
-  }, [rows]);
+    return Array.from(new Set(activeRows.map((r) => r.employeeName).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  }, [activeRows]);
 
   const departments = useMemo(() => {
-    return Array.from(new Set(rows.map((r) => r.dept || "").filter(Boolean))).sort((a, b) => a.localeCompare(b));
-  }, [rows]);
+    return Array.from(new Set(activeRows.map((r) => r.dept || "").filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  }, [activeRows]);
 
   const filteredRows = useMemo(() => {
     const start = asDate(filters.startDate || null);
     const end = asDate(filters.endDate || null);
 
-    return rows.filter((row) => {
+    return activeRows.filter((row) => {
       if (filters.employee && !(row.employeeName || "").toLowerCase().includes(filters.employee.toLowerCase())) return false;
       if (filters.dept !== "all" && (row.dept || "") !== filters.dept) return false;
 
@@ -83,7 +212,7 @@ export default function DashboardPage() {
       }
       return true;
     });
-  }, [filters, rows]);
+  }, [filters, activeRows]);
 
   const aggregates = useMemo(() => {
     const byEmployee = new Map<
@@ -160,7 +289,7 @@ export default function DashboardPage() {
     };
   }, [filteredRows]);
 
-  const hasData = rows.length > 0;
+  const hasData = activeRows.length > 0;
 
   return (
     <div className="pt-20 pb-12 md:pb-10">
@@ -176,10 +305,34 @@ export default function DashboardPage() {
                 Timesheet-backed attendance and payroll snapshot.
               </h1>
               <p className="max-w-3xl text-sm text-[var(--muted)]">
-                View totals from the latest uploaded timesheet, apply filters, and jump to upload or payroll when you need to refresh or compute.
+                View totals from all uploaded timesheets, apply filters, and jump to upload or payroll when you need to refresh or compute.
               </p>
-              <p className="text-xs text-[var(--muted)]">Loaded rows: {rows.length || 0} {rows.length ? "(from session)" : "— upload to populate"}</p>
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-[var(--muted)]">
+                  Loaded rows: {activeRows.length || 0} {activeRows.length ? dataSource === "database" ? "(from database)" : "(from session)" : "— upload to populate"}
+                </span>
+                {dataSource === "database" && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                    DB
+                  </span>
+                )}
+                {refreshing && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">
+                    Refreshing...
+                  </span>
+                )}
+              </div>
             </div>
+            <button
+              onClick={refreshData}
+              disabled={refreshing}
+              className="inline-flex items-center gap-2 rounded-full border border-[var(--accent)] bg-[var(--accent)]/10 px-4 py-2 text-sm font-semibold text-[var(--accent)] transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              Refresh
+            </button>
           </div>
         </header>
 
