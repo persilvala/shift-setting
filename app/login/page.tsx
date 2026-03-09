@@ -22,7 +22,7 @@ function LoginContent() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  const nextPath = searchParams.get("next") || "/dashboard";
+  const nextPath = searchParams.get("next") || "/admin/dashboard";
 
   useEffect(() => {
     const hasSession = document.cookie.split("; ").some((item) => item.startsWith("demo-auth="));

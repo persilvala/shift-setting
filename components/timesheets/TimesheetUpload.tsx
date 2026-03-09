@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { ParsedTimesheetRow, TimesheetMeta } from "@/lib/types";
+import type { ParsedTimesheetRow } from "@/lib/types";
 
 type UploadSuccess = {
   ok: true;
@@ -30,7 +30,6 @@ export function TimesheetUpload() {
   const previewRows = useMemo(() => (result?.rows ?? []).slice(0, PREVIEW_LIMIT), [result]);
   const totalRows = result?.rows.length ?? 0;
 
-  // Restore dates from sessionStorage on mount
   useEffect(() => {
     const metaRaw = sessionStorage.getItem("timesheetMeta");
     if (metaRaw) {
@@ -49,7 +48,7 @@ export function TimesheetUpload() {
       setError("Upload and parse a timesheet first.");
       return;
     }
-    router.push("/payroll");
+    router.push("/admin/payroll");
   };
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -77,7 +76,6 @@ export function TimesheetUpload() {
       }
 
       const dedup = new Set<string>();
-
       const mappedRows = data.rows
         .map((row) => ({ ...row } satisfies ParsedTimesheetRow))
         .filter((row) => {
@@ -104,7 +102,7 @@ export function TimesheetUpload() {
       );
 
       // Notify dashboard to refresh
-      window.dispatchEvent(new CustomEvent('timesheet-updated'));
+      window.dispatchEvent(new CustomEvent("timesheet-updated"));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unexpected error");
     } finally {

@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { TopNav } from "@/components/layout/TopNav";
 import type { ParsedTimesheetRow, PayrollEntry, TimesheetMeta, Adjustment, SavedPayroll } from "@/lib/types";
+import { addAdminLog } from "@/lib/adminLogs";
 
 type PayrollData = {
   payroll: PayrollEntry[];
@@ -11,6 +12,73 @@ type PayrollData = {
   basePayPerDay: number;
   overtimeRatePerHour: number;
 };
+
+function buildAggregatedTimesheet(rows: ParsedTimesheetRow[]) {
+  type WorkingRow = {
+    userId: string;
+    employeeName: string;
+    department: string;
+    workHours: number;
+    overtimeHours: number;
+    dates: Set<string>;
+    lateMinutes: number;
+    earlyMinutes: number;
+    addPayNormal: number;
+    addPayOvertime: number;
+    addPayAllowance: number;
+    payrollDeduction: number;
+  };
+
+  const byUser = new Map<string, WorkingRow>();
+
+  rows.forEach((row, index) => {
+    const key = row.userId || row.employeeName || `row-${index}`;
+    if (!key) return;
+
+    if (!byUser.has(key)) {
+      byUser.set(key, {
+        userId: row.userId || key,
+        employeeName: row.employeeName || "Unnamed",
+        department: row.dept || "",
+        workHours: 0,
+        overtimeHours: 0,
+        dates: new Set<string>(),
+        lateMinutes: 0,
+        earlyMinutes: 0,
+        addPayNormal: 0,
+        addPayOvertime: 0,
+        addPayAllowance: 0,
+        payrollDeduction: 0,
+      });
+    }
+
+    const entry = byUser.get(key)!;
+    entry.workHours += row.totalHours ?? 0;
+    entry.overtimeHours += row.overtimeHours ?? 0;
+    entry.lateMinutes += row.lateMinutes ?? 0;
+    entry.earlyMinutes += row.earlyMinutes ?? 0;
+    entry.addPayNormal += row.addPayNormal ?? 0;
+    entry.addPayOvertime += row.addPayOvertime ?? 0;
+    entry.addPayAllowance += row.addPayAllowance ?? 0;
+    entry.payrollDeduction += row.payrollDeduction ?? 0;
+    if (row.date) entry.dates.add(row.date);
+  });
+
+  return Array.from(byUser.values()).map((entry) => ({
+    userId: entry.userId,
+    employeeName: entry.employeeName,
+    department: entry.department,
+    workHours: Math.round(entry.workHours * 100) / 100,
+    overtimeHours: Math.round(entry.overtimeHours * 100) / 100,
+    workDays: `${entry.dates.size}/${entry.dates.size}`,
+    lateMinutes: entry.lateMinutes,
+    earlyMinutes: entry.earlyMinutes,
+    addPayNormal: entry.addPayNormal,
+    addPayOvertime: entry.addPayOvertime,
+    addPayAllowance: entry.addPayAllowance,
+    payrollDeduction: entry.payrollDeduction,
+  }));
+}
 
 export default function PayrollPage() {
   const [timesheetData, setTimesheetData] = useState<ParsedTimesheetRow[]>([]);
@@ -28,6 +96,16 @@ export default function PayrollPage() {
   const [basePayPerDay, setBasePayPerDay] = useState<number>(0);
   const [overtimeRatePerHour, setOvertimeRatePerHour] = useState<number>(0);
   const [adjustments, setAdjustments] = useState<Record<string, Adjustment>>({});
+  const [selectedUser, setSelectedUser] = useState<string>("all");
+  const [pendingPayroll, setPendingPayroll] = useState<{
+    aggregated: ReturnType<typeof buildAggregatedTimesheet> | null;
+    scopedRows: ParsedTimesheetRow[];
+    employees: number;
+    shifts: number;
+    key: string;
+  } | null>(null);
+  const [showPayrollConfirm, setShowPayrollConfirm] = useState(false);
+  const [locks, setLocks] = useState<string[]>([]);
 
   useEffect(() => {
     const stored = sessionStorage.getItem("timesheetData");
@@ -74,81 +152,72 @@ export default function PayrollPage() {
     }, 0);
   }, [adjustments, payrollData]);
 
-  const aggregatedTimesheet = (rows: ParsedTimesheetRow[]) => {
-    type WorkingRow = {
-      userId: string;
-      employeeName: string;
-      department: string;
-      workHours: number;
-      overtimeHours: number;
-      dates: Set<string>;
-      lateMinutes: number;
-      earlyMinutes: number;
-      addPayNormal: number;
-      addPayOvertime: number;
-      addPayAllowance: number;
-      payrollDeduction: number;
-    };
-
-    const byUser = new Map<string, WorkingRow>();
-
-    rows.forEach((row, index) => {
-      const key = row.userId || row.employeeName || `row-${index}`;
-      if (!key) return;
-
-      if (!byUser.has(key)) {
-        byUser.set(key, {
-          userId: row.userId || key,
-          employeeName: row.employeeName || "Unnamed",
-          department: row.dept || "",
-          workHours: 0,
-          overtimeHours: 0,
-          dates: new Set<string>(),
-          lateMinutes: 0,
-          earlyMinutes: 0,
-          addPayNormal: 0,
-          addPayOvertime: 0,
-          addPayAllowance: 0,
-          payrollDeduction: 0,
-        });
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const storedLocks = localStorage.getItem("payroll-locks");
+    if (storedLocks) {
+      try {
+        setLocks(JSON.parse(storedLocks));
+      } catch {
+        setLocks([]);
       }
+    }
+  }, []);
 
-      const entry = byUser.get(key)!;
-      entry.workHours += row.totalHours ?? 0;
-      entry.overtimeHours += row.overtimeHours ?? 0;
-      entry.lateMinutes += row.lateMinutes ?? 0;
-      entry.earlyMinutes += row.earlyMinutes ?? 0;
-      entry.addPayNormal += row.addPayNormal ?? 0;
-      entry.addPayOvertime += row.addPayOvertime ?? 0;
-      entry.addPayAllowance += row.addPayAllowance ?? 0;
-      entry.payrollDeduction += row.payrollDeduction ?? 0;
-      if (row.date) entry.dates.add(row.date);
+  const employees = useMemo(() => {
+    return Array.from(new Set(timesheetData.map((row) => row.employeeName).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  }, [timesheetData]);
+
+  const filteredShifts = useMemo(() => {
+    if (!timesheetData.length) return [] as ParsedTimesheetRow[];
+    const start = startDate ? new Date(startDate) : null;
+    const end = endDate ? new Date(endDate) : null;
+    return timesheetData.filter((row) => {
+      if (!row.date) return false;
+      const d = new Date(row.date);
+      if (Number.isNaN(d.getTime())) return false;
+      if (start && d < start) return false;
+      if (end && d > end) return false;
+      if (selectedUser !== "all") {
+        const key = row.userId || row.employeeName;
+        if (!key) return false;
+        if (key !== selectedUser && row.employeeName !== selectedUser) return false;
+      }
+      return true;
     });
+  }, [endDate, selectedUser, startDate, timesheetData]);
 
-    return Array.from(byUser.values()).map((entry) => ({
-      userId: entry.userId,
-      employeeName: entry.employeeName,
-      department: entry.department,
-      workHours: Math.round(entry.workHours * 100) / 100,
-      overtimeHours: Math.round(entry.overtimeHours * 100) / 100,
-      workDays: `${entry.dates.size}/${entry.dates.size}`,
-      lateMinutes: entry.lateMinutes,
-      earlyMinutes: entry.earlyMinutes,
-      addPayNormal: entry.addPayNormal,
-      addPayOvertime: entry.addPayOvertime,
-      addPayAllowance: entry.addPayAllowance,
-      payrollDeduction: entry.payrollDeduction,
-    }));
-  };
+  const payrollLookup = useMemo(() => {
+    const map = new Map<string, PayrollEntry>();
+    payrollData?.payroll.forEach((entry) => map.set(entry.employeeName, entry));
+    return map;
+  }, [payrollData]);
 
-  const handleGeneratePayroll = async () => {
+  const handleGeneratePayroll = () => {
+    setError(null);
+    setSuccess(null);
+
     if (!timesheetData.length) {
       setError("Upload and parse a timesheet first.");
+      addAdminLog({ action: "Payroll validation", status: "Failed", description: "No timesheet rows available." });
       return;
     }
 
-    if (!startDate || !endDate || !basePayPerDay) {
-      setError("Enter start date, end date, and base pay per day.");
+    if (!startDate || !endDate) {
+      setError("Enter start and end dates.");
+      addAdminLog({ action: "Payroll validation", status: "Failed", description: "Missing date range." });
+      return;
+    }
+
+    if (basePayPerDay <= 0) {
+      setError("Base pay per day must be greater than zero.");
+      addAdminLog({ action: "Payroll validation", status: "Failed", description: "Base pay per day is not valid." });
+      return;
+    }
+
+    if (overtimeRatePerHour < 0) {
+      setError("OT rate per hour cannot be negative.");
+      addAdminLog({ action: "Payroll validation", status: "Failed", description: "OT rate is negative." });
       return;
     }
 
@@ -157,15 +226,60 @@ export default function PayrollPage() {
 
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) {
       setError("Enter a valid date range (start on/before end).");
+      addAdminLog({ action: "Payroll validation", status: "Failed", description: "Invalid date range." });
       return;
     }
+
+    const inRange = timesheetData.filter((row) => {
+      if (!row.date) return false;
+      const d = new Date(row.date);
+      if (Number.isNaN(d.getTime())) return false;
+      return d >= start && d <= end;
+    });
+
+    const scopedRows = selectedUser === "all"
+      ? inRange
+      : inRange.filter((row) => {
+          const key = row.userId || row.employeeName;
+          return key === selectedUser || row.employeeName === selectedUser;
+        });
+
+    if (!scopedRows.length) {
+      setError("No attended shifts match the selected user/date range.");
+      addAdminLog({ action: "Payroll validation", status: "Failed", description: "No shifts found for selection." });
+      return;
+    }
+
+    const lockKey = `${selectedUser}|${startDate}|${endDate}`;
+    if (locks.includes(lockKey)) {
+      setError("Payroll already generated for this user and date range.");
+      addAdminLog({ action: "Payroll validation", status: "Failed", description: "Duplicate payroll prevented." });
+      return;
+    }
+
+    const aggregated = buildAggregatedTimesheet(scopedRows);
+    setPendingPayroll({
+      aggregated,
+      scopedRows,
+      employees: aggregated.length,
+      shifts: scopedRows.length,
+      key: lockKey,
+    });
+    setShowPayrollConfirm(true);
+    addAdminLog({
+      action: "Payroll validation",
+      status: "Success",
+      description: `Validated ${aggregated.length} employee(s) between ${startDate} and ${endDate}`,
+    });
+  };
+
+  const confirmPayrollGeneration = async () => {
+    if (!pendingPayroll || !pendingPayroll.aggregated) return;
 
     setLoading(true);
     setError(null);
 
     try {
-      const transformedData = aggregatedTimesheet(timesheetData);
-
       const response = await fetch("/api/payroll/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -174,14 +288,16 @@ export default function PayrollPage() {
           endDate,
           basePayPerDay,
           overtimeRatePerHour,
-          timesheetData: transformedData,
+          timesheetData: pendingPayroll.aggregated,
         }),
       });
 
       const result = await response.json();
 
       if (!response.ok || !result.ok) {
-        setError(result.error ?? "Failed to generate payroll");
+        const message = result.error ?? "Failed to generate payroll";
+        setError(message);
+        addAdminLog({ action: "Payroll generation", status: "Failed", description: message });
         return;
       }
 
@@ -193,16 +309,53 @@ export default function PayrollPage() {
         overtimeRatePerHour,
       });
       setAdjustments({});
+      setShowPayrollConfirm(false);
+      addAdminLog({
+        action: "Payroll generation",
+        status: "Success",
+        description: `Generated payroll for ${pendingPayroll.employees} employee(s) covering ${pendingPayroll.shifts} shifts`,
+      });
+
+      const nextLocks = Array.from(new Set([...locks, pendingPayroll.key]));
+      setLocks(nextLocks);
+      if (typeof window !== "undefined") {
+        const totalNet = Array.isArray(result.payroll)
+          ? result.payroll.reduce((sum: number, entry: PayrollEntry) => sum + entry.netPay, 0)
+          : 0;
+        localStorage.setItem("payroll-locks", JSON.stringify(nextLocks));
+        localStorage.setItem(
+          "lastPayrollConfirmation",
+          JSON.stringify({
+            startDate,
+            endDate,
+            employees: pendingPayroll.employees,
+            shifts: pendingPayroll.shifts,
+            totalNet,
+            generatedAt: new Date().toISOString(),
+          })
+        );
+        window.dispatchEvent(new CustomEvent('payroll-generated'));
+      }
+      setPendingPayroll(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unexpected error");
+      const message = err instanceof Error ? err.message : "Unexpected error";
+      setError(message);
+      addAdminLog({ action: "Payroll generation", status: "Failed", description: message });
     } finally {
       setLoading(false);
     }
   };
 
+  const cancelPayrollConfirm = () => {
+    setShowPayrollConfirm(false);
+    setPendingPayroll(null);
+    addAdminLog({ action: "Payroll generation", status: "Cancelled", description: "Payroll confirmation cancelled" });
+  };
+
   const handleSavePayroll = async () => {
     if (!payrollData) {
       setError("Generate payroll first before saving.");
+      addAdminLog({ action: "Payroll save", status: "Failed", description: "Attempted to save without generated payroll." });
       return;
     }
 
@@ -237,13 +390,16 @@ export default function PayrollPage() {
 
       if (!response.ok || !result.ok) {
         setError(result.error ?? "Failed to save payroll");
+        addAdminLog({ action: "Payroll save", status: "Failed", description: result.error ?? "Failed to save payroll" });
         return;
       }
 
       setSuccess("Payroll saved to database successfully!");
+      addAdminLog({ action: "Payroll save", status: "Success", description: `Saved ${payrollData.payroll.length} payroll entries.` });
       fetchSavedPayrolls();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save payroll");
+      addAdminLog({ action: "Payroll save", status: "Failed", description: err instanceof Error ? err.message : "Failed to save payroll" });
     } finally {
       setSaving(false);
     }
@@ -252,6 +408,7 @@ export default function PayrollPage() {
   const handleExportCsv = async () => {
     if (!payrollData) {
       setError("Generate payroll before exporting.");
+      addAdminLog({ action: "Payroll export", status: "Failed", description: "No payroll data to export." });
       return;
     }
 
@@ -289,8 +446,10 @@ export default function PayrollPage() {
       anchor.download = filename;
       anchor.click();
       URL.revokeObjectURL(url);
+      addAdminLog({ action: "Payroll export", status: "Success", description: `Exported payroll CSV (${filename}).` });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to export payroll");
+      addAdminLog({ action: "Payroll export", status: "Failed", description: err instanceof Error ? err.message : "Failed to export payroll" });
     } finally {
       setExporting(false);
     }
@@ -328,7 +487,22 @@ export default function PayrollPage() {
 
         <section className="rounded-3xl border border-[var(--border)] bg-[var(--panel)]/90 p-6 shadow-[0_18px_50px_rgba(16,40,94,0.08)]">
           <h2 className="text-xl font-semibold text-[var(--foreground)]">Payroll period and rates</h2>
-          <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+            <div>
+              <label className="text-sm font-semibold text-[var(--muted)]">User scope</label>
+              <select
+                value={selectedUser}
+                onChange={(e) => setSelectedUser(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
+              >
+                <option value="all">All users</option>
+                {employees.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div>
               <label className="text-sm font-semibold text-[var(--muted)]">Start date</label>
               <input
@@ -386,6 +560,9 @@ export default function PayrollPage() {
                 {saving ? "Saving…" : "Save to database"}
               </button>
             )}
+            <span className="rounded-full border border-[var(--border)] bg-white px-3 py-1 text-xs font-semibold text-[var(--muted)]">
+              In scope: {filteredShifts.length} shifts · {selectedUser === "all" ? `${employees.length || 0} employee(s)` : selectedUser}
+            </span>
             {error && <span className="text-sm font-semibold text-red-600">{error}</span>}
             {success && <span className="text-sm font-semibold text-emerald-600">{success}</span>}
           </div>
@@ -484,6 +661,64 @@ export default function PayrollPage() {
           </section>
         )}
 
+        <section className="rounded-3xl border border-[var(--border)] bg-[var(--panel)]/90 p-6 shadow-[0_24px_70px_rgba(16,40,94,0.1)]">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-xs uppercase tracking-[0.26em] text-[var(--muted)]">Employee shifts</p>
+              <h3 className="text-xl font-semibold text-[var(--foreground)]">Attendance driving payroll</h3>
+              <p className="text-sm text-[var(--muted)]">Attended shifts in the selected range feed payroll calculations. Filters sit above the table.</p>
+            </div>
+            <span className="rounded-full border border-[var(--border)] bg-white px-3 py-1 text-xs font-semibold text-[var(--muted)]">{filteredShifts.length} shift(s) in view</span>
+          </div>
+
+          <div className="mt-5 overflow-hidden rounded-2xl border border-[var(--border)] bg-white/90 shadow-[0_12px_32px_rgba(16,40,94,0.06)]">
+            <div className="overflow-x-auto">
+              <table className="min-w-[960px] w-full text-sm">
+                <thead className="bg-[var(--surface)] text-[var(--muted)]">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Employee</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Date</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Time in</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Time out</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Hours worked</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Attendance</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Payroll record</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border)]/70 text-[var(--foreground)]">
+                  {filteredShifts.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-4 text-center text-[var(--muted)]">No shifts found for the current filters.</td>
+                    </tr>
+                  ) : (
+                    filteredShifts.map((row, idx) => {
+                      const status = row.issues && row.issues.length > 0 ? "Attention" : "Present";
+                      const payrollRecord = payrollLookup.get(row.employeeName ?? "");
+                      return (
+                        <tr key={`${row.employeeName}-${row.date}-${idx}`} className="hover:bg-[var(--surface)]/60">
+                          <td className="px-4 py-3 font-semibold text-[var(--foreground)]">{row.employeeName || "—"}</td>
+                          <td className="px-4 py-3 text-[var(--muted)]">{row.date || "—"}</td>
+                          <td className="px-4 py-3 text-[var(--muted)]">{row.timeIn || "—"}</td>
+                          <td className="px-4 py-3 text-[var(--muted)]">{row.timeOut || "—"}</td>
+                          <td className="px-4 py-3 text-[var(--muted)]">{(row.totalHours ?? 0).toFixed(2)}</td>
+                          <td className="px-4 py-3">
+                            <span className={`rounded-full px-3 py-1 text-xs font-semibold ${status === "Present" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+                              {status}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-[var(--muted)]">
+                            {payrollRecord ? `Net: $${payrollRecord.netPay.toFixed(2)}` : "Pending"}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
         {savedPayrolls.length > 0 && (
           <section className="rounded-3xl border border-[var(--border)] bg-[var(--panel)]/90 p-6 shadow-[0_24px_70px_rgba(16,40,94,0.1)]">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -528,6 +763,67 @@ export default function PayrollPage() {
             </div>
           </section>
         )}
+
+        {showPayrollConfirm && pendingPayroll ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
+            <div className="w-full max-w-2xl rounded-3xl bg-white p-6 shadow-[0_28px_80px_rgba(16,40,94,0.24)]">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.28em] text-[var(--muted)]">Confirm payroll</p>
+                  <h3 className="text-xl font-semibold text-[var(--foreground)]">Generate after review</h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={cancelPayrollConfirm}
+                  className="rounded-full border border-[var(--border)] px-3 py-1 text-sm font-semibold text-[var(--muted)] transition hover:border-[var(--accent)] hover:text-[var(--foreground)]"
+                >
+                  Cancel
+                </button>
+              </div>
+
+              <div className="mt-4 grid gap-3 rounded-2xl border border-[var(--border)] bg-[var(--panel)]/80 p-4 text-sm text-[var(--foreground)] sm:grid-cols-2">
+                <div className="space-y-1">
+                  <p className="text-[var(--muted)]">Date range</p>
+                  <p className="font-semibold">{startDate} → {endDate}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-[var(--muted)]">Employees in scope</p>
+                  <p className="font-semibold">{pendingPayroll.employees}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-[var(--muted)]">Total shifts</p>
+                  <p className="font-semibold">{pendingPayroll.shifts}</p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-[var(--muted)]">Estimated payroll records</p>
+                  <p className="font-semibold">{pendingPayroll.aggregated?.length ?? 0}</p>
+                </div>
+              </div>
+
+              {error && !loading ? (
+                <div className="mt-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
+              ) : null}
+
+              <div className="mt-5 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={cancelPayrollConfirm}
+                  className="rounded-xl border border-[var(--border)] px-4 py-2 text-sm font-semibold text-[var(--muted)] transition hover:border-[var(--accent)] hover:text-[var(--foreground)]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmPayrollGeneration}
+                  disabled={loading}
+                  className="rounded-xl bg-gradient-to-r from-[var(--accent-strong)] to-[var(--accent)] px-5 py-2 text-sm font-semibold text-white shadow-[0_12px_34px_rgba(47,109,246,0.28)] transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {loading ? "Generating…" : "Generate payroll"}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </main>
     </div>
   );

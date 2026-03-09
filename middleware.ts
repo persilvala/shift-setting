@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 
 const AUTH_COOKIE = "demo-auth";
 const publicPaths = ["/login"];
-const protectedRoots = ["/dashboard", "/timesheets", "/payroll"];
+const protectedRoots = ["/admin/dashboard", "/admin/timesheets", "/admin/payroll", "/admin/logs"];
 
 export function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
@@ -17,11 +17,11 @@ export function middleware(request: NextRequest) {
   const isProtected = protectedRoots.some((path) => pathname === path || pathname.startsWith(`${path}/`));
 
   if (pathname === "/") {
-    return NextResponse.redirect(new URL(hasAuth ? "/dashboard" : "/login", request.url));
+    return NextResponse.redirect(new URL(hasAuth ? "/admin/dashboard" : "/login", request.url));
   }
 
   if (isPublic) {
-    return hasAuth ? NextResponse.redirect(new URL("/dashboard", request.url)) : NextResponse.next();
+    return hasAuth ? NextResponse.redirect(new URL("/admin/dashboard", request.url)) : NextResponse.next();
   }
 
   if (isProtected && !hasAuth) {

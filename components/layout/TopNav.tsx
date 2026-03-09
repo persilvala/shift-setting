@@ -5,9 +5,10 @@ import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 
 const navItems = [
-  { key: "dashboard", label: "Dashboard", href: "/dashboard" },
-  { key: "timesheets", label: "Timesheets", href: "/timesheets" },
-  { key: "payroll", label: "Payroll", href: "/payroll" },
+  { key: "dashboard", label: "Dashboard", href: "/admin/dashboard" },
+  { key: "timesheets", label: "Timesheets", href: "/admin/timesheets" },
+  { key: "payroll", label: "Payroll", href: "/admin/payroll" },
+  { key: "logs", label: "Logs", href: "/admin/logs" },
 ];
 
 export function TopNav() {

@@ -3,6 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { TopNav } from "@/components/layout/TopNav";
 import type { ParsedTimesheetRow, DashboardRow, FilterState } from "@/lib/types";
+import { UploadTimesheet } from "@/components/UploadTimesheet";
+import { AttendanceSummaryTable } from "@/components/AttendanceSummaryTable";
+import type { AttendanceSummary } from "@/lib/attendanceCalculator";
 
 const initialFilters: FilterState = {
   employee: "",
@@ -20,6 +23,15 @@ type TimesheetWithRows = {
   totalRows: number;
   uploadedAt: string;
   rows: DashboardRow[];
+};
+
+type PayrollDashboardSummary = {
+  startDate: string;
+  endDate: string;
+  employees: number;
+  totalNet?: number;
+  shifts?: number;
+  generatedAt?: string;
 };
 
 function asDate(value: string | null): Date | null {
@@ -56,6 +68,8 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [dataSource, setDataSource] = useState<"database" | "session">("session");
   const [refreshing, setRefreshing] = useState(false);
+  const [payrollSummary, setPayrollSummary] = useState<PayrollDashboardSummary | null>(null);
+  const [attendanceSummary, setAttendanceSummary] = useState<AttendanceSummary[]>([]);
 
   const refreshData = async () => {
     setRefreshing(true);
@@ -81,6 +95,38 @@ export default function DashboardPage() {
       console.error('[Dashboard] Failed to refresh:', err);
     } finally {
       setRefreshing(false);
+    }
+  };
+
+  const loadPayrollSummary = async () => {
+    if (typeof window === "undefined") return;
+    const stored = localStorage.getItem("lastPayrollConfirmation");
+    if (!stored) {
+      setPayrollSummary(null);
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(stored) as PayrollDashboardSummary;
+      setPayrollSummary(parsed);
+
+      try {
+        const response = await fetch("/api/payroll");
+        const data = await response.json();
+        if (data.payrolls && data.payrolls.length) {
+          const latest = data.payrolls[0];
+          setPayrollSummary((prev) => ({
+            ...(prev ?? parsed),
+            totalNet: latest.totalNetPay ?? prev?.totalNet,
+            employees: latest._count?.entries ?? prev?.employees ?? parsed.employees,
+            generatedAt: latest.generatedAt ?? prev?.generatedAt,
+          }));
+        }
+      } catch (err) {
+        console.error('[Dashboard] Failed to load payroll summary', err);
+      }
+    } catch {
+      setPayrollSummary(null);
     }
   };
 
@@ -123,6 +169,7 @@ export default function DashboardPage() {
     };
 
     fetchFromDatabase();
+    loadPayrollSummary();
 
     // Listen for timesheet updates
     const handleTimesheetUpdated = () => {
@@ -130,7 +177,13 @@ export default function DashboardPage() {
       fetchFromDatabase();
     };
 
+    const handlePayrollGenerated = () => {
+      console.log('[Dashboard] Payroll generated, loading summary...');
+      loadPayrollSummary();
+    };
+
     window.addEventListener('timesheet-updated', handleTimesheetUpdated);
+    window.addEventListener('payroll-generated', handlePayrollGenerated);
 
     // Also check session storage for compatibility
     const stored = sessionStorage.getItem("timesheetData");
@@ -145,8 +198,13 @@ export default function DashboardPage() {
 
     return () => {
       window.removeEventListener('timesheet-updated', handleTimesheetUpdated);
+      window.removeEventListener('payroll-generated', handlePayrollGenerated);
     };
   }, []);
+
+  const handleUploadResults = (rows: AttendanceSummary[]) => {
+    setAttendanceSummary(rows);
+  };
 
   const activeRows: DashboardRow[] = dbRows.length > 0 ? dbRows : (rows as DashboardRow[]);
 
@@ -299,6 +357,8 @@ export default function DashboardPage() {
           </div>
         </header>
 
+        {/* Upload removed per request; summaries can be fed from API/session if needed */}
+
         <section className="rounded-3xl border border-[var(--border)] bg-[var(--panel)]/90 p-6 shadow-[0_18px_50px_rgba(16,40,94,0.08)]">
           <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
             <div className="space-y-2">
@@ -388,6 +448,45 @@ export default function DashboardPage() {
             <p className="pt-3 text-3xl font-semibold text-[var(--foreground)]">{aggregates.totalEarly}</p>
             <p className="text-sm text-[var(--muted)]">Sum of early/undertime minutes</p>
           </div>
+        </section>
+
+        <section className="rounded-3xl border border-[var(--border)] bg-[var(--panel)]/90 p-6 shadow-[0_18px_50px_rgba(16,40,94,0.08)]">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-xs uppercase tracking-[0.26em] text-[var(--muted)]">Payroll visibility</p>
+              <h3 className="text-xl font-semibold text-[var(--foreground)]">Only shown after confirmed generation</h3>
+              <p className="text-sm text-[var(--muted)]">Payroll totals stay hidden until a generation is confirmed on the Payroll page.</p>
+            </div>
+            <span className={`rounded-full px-3 py-1 text-xs font-semibold ${payrollSummary ? "border border-emerald-200 bg-emerald-50 text-emerald-700" : "border border-amber-200 bg-amber-50 text-amber-700"}`}>
+              {payrollSummary ? "Confirmed" : "Awaiting confirmation"}
+            </span>
+          </div>
+
+          {payrollSummary ? (
+            <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="rounded-2xl border border-[var(--border)] bg-white p-4 shadow-sm">
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Payroll range</p>
+                <p className="pt-2 text-lg font-semibold text-[var(--foreground)]">{payrollSummary.startDate} → {payrollSummary.endDate}</p>
+                {payrollSummary.generatedAt && <p className="text-xs text-[var(--muted)]">Generated {new Date(payrollSummary.generatedAt).toLocaleString()}</p>}
+              </div>
+              <div className="rounded-2xl border border-[var(--border)] bg-white p-4 shadow-sm">
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Employees paid</p>
+                <p className="pt-2 text-2xl font-semibold text-[var(--foreground)]">{payrollSummary.employees}</p>
+              </div>
+              <div className="rounded-2xl border border-[var(--border)] bg-white p-4 shadow-sm">
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Total payroll amount</p>
+                <p className="pt-2 text-2xl font-semibold text-[var(--accent)]">{payrollSummary.totalNet ? `$${payrollSummary.totalNet.toFixed(2)}` : "—"}</p>
+              </div>
+              <div className="rounded-2xl border border-[var(--border)] bg-white p-4 shadow-sm">
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Shifts included</p>
+                <p className="pt-2 text-2xl font-semibold text-[var(--foreground)]">{payrollSummary.shifts ?? "—"}</p>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-4 rounded-2xl border border-dashed border-[var(--border)] bg-[var(--surface)] px-5 py-6 text-sm text-[var(--muted)]">
+              Generate payroll and confirm the modal to display the summary here.
+            </div>
+          )}
         </section>
 
         <section className="rounded-3xl border border-[var(--border)] bg-[var(--panel)]/90 p-6 shadow-[0_24px_70px_rgba(16,40,94,0.1)]">
