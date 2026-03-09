@@ -1,0 +1,15 @@
+{
+    "sqltools.connections": [
+        {
+            "ssh": "Disabled",
+            "previewLimit": 50,
+            "server": "localhost",
+            "port": 5432,
+            "driver": "PostgreSQL",
+            "name": "Dev DB",
+            "group": "Shift Setting",
+            "database": "shift_setting",
+            "username": "postgres"
+        }
+    ]
+}
