@@ -8,13 +8,19 @@
     "start": "next start",
     "lint": "eslint"
   },
+  "prisma": {
+    "seed": "npx tsx prisma/seed.ts"
+  },
   "dependencies": {
+    "@auth/prisma-adapter": "^2.11.1",
     "@prisma/adapter-pg": "^7.4.2",
     "@prisma/client": "^7.0.0",
+    "bcryptjs": "^3.0.3",
     "dotenv": "^17.3.1",
     "jspdf": "^4.2.0",
     "jspdf-autotable": "^5.0.7",
     "next": "16.1.6",
+    "next-auth": "^5.0.0-beta.28",
     "pdf-parse": "^2.4.5",
     "pg": "^8.20.0",
     "react": "19.2.3",
@@ -23,6 +29,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20",
     "@types/pdf-parse": "^1.1.5",
     "@types/pg": "^8.18.0",
@@ -33,6 +40,7 @@
     "eslint-config-next": "16.1.6",
     "prisma": "^7.0.0",
     "tailwindcss": "^4",
+    "tsx": "^4.21.0",
     "typescript": "^5"
   }
 }

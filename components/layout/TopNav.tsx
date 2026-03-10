@@ -3,12 +3,14 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
+import { signOut } from "next-auth/react";
 
 const navItems = [
   { key: "dashboard", label: "Dashboard", href: "/admin/dashboard" },
   { key: "timesheets", label: "Timesheets", href: "/admin/timesheets" },
   { key: "payroll", label: "Payroll", href: "/admin/payroll" },
   { key: "logs", label: "Logs", href: "/admin/logs" },
+  { key: "admins", label: "Admins", href: "/admin/admins" },
 ];
 
 export function TopNav() {
@@ -16,8 +18,8 @@ export function TopNav() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
 
-  const handleLogout = () => {
-    document.cookie = "demo-auth=; Max-Age=0; path=/";
+  const handleLogout = async () => {
+    await signOut({ redirect: false });
     router.push("/login");
     setOpen(false);
   };
