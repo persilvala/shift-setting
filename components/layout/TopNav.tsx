@@ -38,9 +38,11 @@ export function TopNav() {
             onClick={() => setOpen((v) => !v)}
             aria-label="Toggle navigation"
           >
-            <span className="block h-0.5 w-5 bg-current"></span>
-            <span className="mt-1 block h-0.5 w-5 bg-current"></span>
-            <span className="mt-1 block h-0.5 w-5 bg-current"></span>
+            <span className="flex flex-col items-center justify-center gap-1">
+              <span className="block h-0.5 w-5 bg-current"></span>
+              <span className="block h-0.5 w-5 bg-current"></span>
+              <span className="block h-0.5 w-5 bg-current"></span>
+            </span>
           </button>
           <div className="hidden items-center gap-3 md:flex">
             <ul className="flex items-center gap-2 sm:gap-3">
