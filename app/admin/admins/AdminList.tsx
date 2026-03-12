@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { createAdmin, deleteAdmin } from "@/actions/auth";
+import { PageHeader } from "@/components/PageHeader";
 
 type Admin = {
   id: string;
@@ -58,7 +59,7 @@ export function AdminList({
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-8 px-4 pt-6 sm:px-6 md:pt-10 lg:px-10">
       <header className="space-y-2">
-        <p className="text-xs uppercase tracking-[0.32em] text-[var(--muted)]">Settings</p>
+        <PageHeader>Settings</PageHeader>
         <h1 className="text-3xl font-semibold leading-tight text-[var(--foreground)] md:text-4xl">
           Manage Admins
         </h1>

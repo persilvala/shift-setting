@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { ParsedTimesheetRow } from "@/lib/types";
+import { PageHeader } from "@/components/PageHeader";
 
 type UploadSuccess = {
   ok: true;
@@ -118,7 +119,7 @@ export function TimesheetUpload() {
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-8 px-4 pt-6 sm:px-6 md:pt-10 lg:px-10">
       <header className="space-y-2">
-        <p className="text-xs uppercase tracking-[0.32em] text-[var(--muted)]">Timesheets</p>
+        <PageHeader>Timesheets</PageHeader>
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <h1 className="text-3xl font-semibold leading-tight text-[var(--foreground)] md:text-4xl">
             Upload the timesheet template and review the rows.

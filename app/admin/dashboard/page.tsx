@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { TopNav } from "@/components/layout/TopNav";
+import { PageHeader } from "@/components/PageHeader";
 import type { ParsedTimesheetRow, DashboardRow, FilterState } from "@/lib/types";
 import { UploadTimesheet } from "@/components/UploadTimesheet";
 import { AttendanceSummaryTable } from "@/components/AttendanceSummaryTable";
@@ -317,9 +318,7 @@ export default function DashboardPage() {
       <TopNav />
       <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-8 px-4 pt-6 sm:px-6 md:pt-10 lg:px-10">
         <header className="space-y-4">
-          <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--surface)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.3em] text-[var(--muted)]">
-            Dashboard
-          </div>
+          <PageHeader>Dashboard</PageHeader>
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div className="space-y-2">
               <h1 className="text-3xl font-semibold leading-tight text-[var(--foreground)] md:text-4xl">
