@@ -9,8 +9,8 @@ const navItems = [
   { key: "dashboard", label: "Dashboard", href: "/admin/dashboard" },
   { key: "timesheets", label: "Timesheets", href: "/admin/timesheets" },
   { key: "payroll", label: "Payroll", href: "/admin/payroll" },
-  { key: "logs", label: "Logs", href: "/admin/logs" },
-  { key: "admins", label: "Admins", href: "/admin/admins" },
+  { key: "logs", label: "Admin Logs", href: "/admin/logs" },
+  { key: "admins", label: "Settings", href: "/admin/admins" },
 ];
 
 export function TopNav() {
