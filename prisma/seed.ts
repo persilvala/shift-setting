@@ -4,26 +4,25 @@ import bcrypt from "bcryptjs";
 const prisma = new PrismaClient();
 
 async function main() {
-  const existingAdmin = await prisma.admin.findUnique({
-    where: { username: "admin" },
-  });
+  const username = "persilvala";
+  const password = "Asceoft@2026";
 
-  if (existingAdmin) {
-    console.log("Admin already exists, skipping seed.");
-    return;
-  }
+  const passwordHash = await bcrypt.hash(password, 10);
 
-  const passwordHash = await bcrypt.hash("123", 10);
-
-  await prisma.admin.create({
-    data: {
-      username: "admin",
+  await prisma.admin.upsert({
+    where: { username },
+    update: {
       passwordHash,
-      mustChangePassword: true,
+      mustChangePassword: false,
+    },
+    create: {
+      username,
+      passwordHash,
+      mustChangePassword: false,
     },
   });
 
-  console.log("Initial admin created: username=admin, password=123");
+  console.log(`Admin seeded: username=${username}, password=${password}`);
 }
 
 main()

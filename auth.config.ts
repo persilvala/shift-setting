@@ -12,12 +12,10 @@ export const authConfig = {
         nextUrl.pathname.startsWith("/admin") &&
         nextUrl.pathname !== "/admin/password";
 
-      if (isOnProtectedRoute) {
-        if (isLoggedIn) return true;
+      if (isOnProtectedRoute && !isLoggedIn) {
         return false;
-      } else if (isLoggedIn && nextUrl.pathname === "/login") {
-        return Response.redirect(new URL("/admin/dashboard", nextUrl));
       }
+
       return true;
     },
   },

@@ -19,9 +19,8 @@ export function TopNav() {
   const [open, setOpen] = useState(false);
 
   const handleLogout = async () => {
-    await signOut({ redirect: false });
-    router.push("/login");
     setOpen(false);
+    await signOut({ redirectTo: "/login" });
   };
 
   return (

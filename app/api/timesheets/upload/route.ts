@@ -56,45 +56,55 @@ export async function POST(request: Request) {
     }
 
     // Save to database
+    const filteredRows = result.rows.filter((row) => {
+      const hasName = Boolean(row.employeeName && row.employeeName.trim());
+      const hasDate = Boolean(row.date);
+      const hasTimeOrHours = Boolean(row.timeIn || row.timeOut || row.totalHours || row.workHours || row.workHoursActual);
+      const hasAnyTimeBlock = Boolean(
+        row.beforeNoonIn || row.beforeNoonOut ||
+        row.afterNoonIn || row.afterNoonOut ||
+        row.overtimeIn || row.overtimeOut
+      );
+      return hasName && hasDate && (hasTimeOrHours || hasAnyTimeBlock);
+    });
+
     const timesheet = await prisma.timesheet.create({
       data: {
         fileName: file.name,
         format: result.format,
         startDate: new Date(result.startDate!),
         endDate: new Date(result.endDate!),
-        totalRows: result.rows.length,
+        totalRows: filteredRows.length,
         rows: {
-          create: result.rows
-            .filter(row => row.date)
-            .map(row => ({
-              employeeName: row.employeeName,
-              userId: row.userId,
-              date: new Date(row.date!),
-              weekday: row.weekday,
-              dept: row.dept,
-              beforeNoonIn: row.beforeNoonIn,
-              beforeNoonOut: row.beforeNoonOut,
-              afterNoonIn: row.afterNoonIn,
-              afterNoonOut: row.afterNoonOut,
-              overtimeIn: row.overtimeIn,
-              overtimeOut: row.overtimeOut,
-              totalHours: row.totalHours,
-              workHours: row.workHours,
-              workHoursActual: row.workHoursActual,
-              overtimeHours: row.overtimeHours,
-              lateMinutes: row.lateMinutes,
-              earlyMinutes: row.earlyMinutes,
-              workDays: row.workDays,
-              tripDays: row.tripDays,
-              absenceDays: row.absenceDays,
-              leaveDays: row.leaveDays,
-              addPayNormal: row.addPayNormal,
-              addPayOvertime: row.addPayOvertime,
-              addPayAllowance: row.addPayAllowance,
-              payrollDeduction: row.payrollDeduction,
-              shiftCode: row.shiftCode,
-              remark: row.remark,
-            })),
+          create: filteredRows.map((row) => ({
+            employeeName: row.employeeName,
+            userId: row.userId,
+            date: new Date(row.date!),
+            weekday: row.weekday,
+            dept: row.dept,
+            beforeNoonIn: row.beforeNoonIn,
+            beforeNoonOut: row.beforeNoonOut,
+            afterNoonIn: row.afterNoonIn,
+            afterNoonOut: row.afterNoonOut,
+            overtimeIn: row.overtimeIn,
+            overtimeOut: row.overtimeOut,
+            totalHours: row.totalHours,
+            workHours: row.workHours,
+            workHoursActual: row.workHoursActual,
+            overtimeHours: row.overtimeHours,
+            lateMinutes: row.lateMinutes,
+            earlyMinutes: row.earlyMinutes,
+            workDays: row.workDays,
+            tripDays: row.tripDays,
+            absenceDays: row.absenceDays,
+            leaveDays: row.leaveDays,
+            addPayNormal: row.addPayNormal,
+            addPayOvertime: row.addPayOvertime,
+            addPayAllowance: row.addPayAllowance,
+            payrollDeduction: row.payrollDeduction,
+            shiftCode: row.shiftCode,
+            remark: row.remark,
+          })),
         },
       },
       include: { rows: true },
@@ -105,6 +115,7 @@ export async function POST(request: Request) {
       fileName: timesheet.fileName,
       rowCount: timesheet.rows.length,
       uploadedAt: timesheet.uploadedAt,
+      skippedEmpty: result.rows.length - filteredRows.length,
     });
 
     return NextResponse.json({

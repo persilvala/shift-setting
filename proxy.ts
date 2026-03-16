@@ -12,10 +12,6 @@ export default auth((req) => {
     return Response.redirect(new URL("/login", req.nextUrl));
   }
 
-  if (isLoggedIn && req.nextUrl.pathname === "/login") {
-    return Response.redirect(new URL("/admin/dashboard", req.nextUrl));
-  }
-
   return NextResponse.next();
 });
 
