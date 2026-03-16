@@ -9,9 +9,21 @@
     "lint": "eslint"
   },
   "dependencies": {
+<<<<<<< Updated upstream
     "jspdf": "^4.2.0",
     "jspdf-autotable": "^5.0.7",
     "next": "16.1.6",
+=======
+    "@auth/prisma-adapter": "^2.11.1",
+    "@prisma/adapter-pg": "^7.5.0",
+    "@prisma/client": "^7.5.0",
+    "bcryptjs": "^3.0.3",
+    "dotenv": "^17.3.1",
+    "jspdf": "^4.2.0",
+    "jspdf-autotable": "^5.0.7",
+    "next": "^15.5.12",
+    "next-auth": "^5.0.0-beta.28",
+>>>>>>> Stashed changes
     "pdf-parse": "^2.4.5",
     "react": "19.2.3",
     "react-dom": "19.2.3",
@@ -26,6 +38,10 @@
     "@types/xlsx": "^0.0.35",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
+<<<<<<< Updated upstream
+=======
+    "prisma": "^7.5.0",
+>>>>>>> Stashed changes
     "tailwindcss": "^4",
     "typescript": "^5"
   }

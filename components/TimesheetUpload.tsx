@@ -67,10 +67,21 @@ export function TimesheetUpload() {
       body.append("file", file);
 
       const response = await fetch("/api/timesheets/upload", { method: "POST", body });
-      const data = (await response.json()) as UploadSuccess | UploadError;
+
+      const contentType = response.headers.get("content-type");
+      let data: UploadSuccess | UploadError;
+
+      if (contentType?.includes("application/json")) {
+        data = await response.json() as UploadSuccess | UploadError;
+      } else {
+        const text = await response.text();
+        console.error("[timesheet-upload] Non-JSON response:", text.substring(0, 500));
+        setError(`Server error: ${response.status}. Please check the server logs.`);
+        return;
+      }
 
       if (!response.ok || !data.ok) {
-        const message = "error" in data ? data.error : "Failed to parse file";
+        const message = "error" in data ? data.error : `Failed to parse file (HTTP ${response.status})`;
         setError(message);
         return;
       }

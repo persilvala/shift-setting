@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx";
+<<<<<<< Updated upstream
 import { PDFParse } from "pdf-parse";
 
 export type ParsedTimesheetRow = {
@@ -45,6 +46,30 @@ export type ParsedTimesheetRow = {
   payrollDeduction?: number | null;
   remark?: string | null;
 };
+=======
+import type { ParsedTimesheetRow } from "@/lib/types";
+
+async function loadPdfParser() {
+  try {
+    const mod = await import("pdf-parse");
+    const PDFParseClass = (mod as Record<string, unknown>).PDFParse as unknown;
+    if (typeof PDFParseClass === "function") {
+      return PDFParseClass as new (config: { data: Buffer }) => Promise<{ getText: () => Promise<{ text: string }>; destroy: () => Promise<void> }>;
+    }
+    return null;
+  } catch (err) {
+    console.error("[timesheetParser] Failed to load pdf-parse:", err);
+    return null;
+  }
+}
+
+interface PdfParserInstance {
+  getText(): Promise<{ text: string }>;
+  destroy(): Promise<void>;
+}
+
+export type { ParsedTimesheetRow } from "@/lib/types";
+>>>>>>> Stashed changes
 
 type NormalizedField = "employeeName" | "date" | "timeIn" | "timeOut" | "hours";
 
@@ -1402,16 +1427,23 @@ function detectDelimiter(line: string): { parts: string[]; delimiter: Delimiter 
 }
 
 async function extractPdfLines(buffer: Buffer): Promise<string[]> {
-  const parser = new PDFParse({ data: buffer });
+  const PDFParseClass = await loadPdfParser();
+  if (!PDFParseClass) {
+    console.warn("[timesheetParser] PDF parser not available, skipping PDF processing");
+    return [];
+  }
   try {
-    const textResult = await parser.getText();
+    const parser = new PDFParseClass({ data: buffer }) as Promise<PdfParserInstance>;
+    const parserInstance = await parser;
+    const textResult = await parserInstance.getText();
     const text = textResult?.text ?? "";
     return text
       .split(/\r?\n/)
       .map((line: string) => line.trim())
       .filter(Boolean);
-  } finally {
-    await parser.destroy();
+  } catch (err) {
+    console.error("[timesheetParser] PDF parsing error:", err);
+    return [];
   }
 }
 
