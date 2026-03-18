@@ -28,6 +28,7 @@ type ManualRow = {
   timeIn?: string | null;
   timeOut?: string | null;
   isSoftDeleted?: boolean;
+  attendanceStatus?: "full_day" | "half_day" | "absent";
 };
 
 const createBlankManualRow = (): ManualRow => ({
@@ -39,6 +40,7 @@ const createBlankManualRow = (): ManualRow => ({
   timeIn: "",
   timeOut: "",
   isSoftDeleted: false,
+  attendanceStatus: "full_day",
 });
 
 export function TimesheetUpload() {
@@ -245,6 +247,7 @@ export function TimesheetUpload() {
       addPayOvertime: 0,
       addPayAllowance: 0,
       payrollDeduction: 0,
+      attendanceStatus: row.attendanceStatus ?? "full_day",
     }));
 
     const dates = activeRows.map((row) => new Date(row.date)).filter((d) => !Number.isNaN(d.getTime()));
@@ -993,7 +996,34 @@ export function TimesheetUpload() {
                     previewRows.map((row, idx) => {
                       const isManual = (row as ManualRow).id !== undefined;
                       const baseKey = isManual ? (row as ManualRow).id : `upload-${idx}`;
-                      const softDeleted = isManual ? (row as ManualRow).isSoftDeleted : Boolean((row as ParsedTimesheetRow).isSoftDeleted);
+                      const attendanceStatus = (row as ParsedTimesheetRow).attendanceStatus ?? (row as ManualRow).attendanceStatus ?? "full_day";
+                      const isEdited = row.isSoftDeleted; // Use for status display
+
+                      const getStatusColor = (status: string) => {
+                        switch (status) {
+                          case "full_day":
+                            return "bg-emerald-100 text-emerald-700";
+                          case "half_day":
+                            return "bg-amber-100 text-amber-700";
+                          case "absent":
+                            return "bg-red-100 text-red-700";
+                          default:
+                            return "bg-gray-100 text-gray-700";
+                        }
+                      };
+
+                      const getStatusLabel = (status: string) => {
+                        switch (status) {
+                          case "full_day":
+                            return "Full";
+                          case "half_day":
+                            return "Half";
+                          case "absent":
+                            return "Absent";
+                          default:
+                            return "Unknown";
+                        }
+                      };
                       const name = (row as ParsedTimesheetRow).employeeName ?? (row as ManualRow).employeeName;
                       const date = (row as ParsedTimesheetRow).date ?? (row as ManualRow).date;
                       const hours = (row as ParsedTimesheetRow).totalHours ?? (row as ManualRow).totalHours;
@@ -1076,7 +1106,7 @@ export function TimesheetUpload() {
                         <tr
                           key={baseKey}
                           id={isManual ? `preview-row-${baseKey}` : `preview-row-upload-${idx}`}
-                          className={`hover:bg-[var(--surface)]/60 ${softDeleted ? "opacity-60" : ""}`}
+                          className={`hover:bg-[var(--surface)]/60 ${row.isSoftDeleted ? "opacity-60" : ""}`}
                         >
                           <td className="px-4 py-3">
                             <input
@@ -1130,7 +1160,43 @@ export function TimesheetUpload() {
                               disabled={entryMode === "manual"}
                             />
                           </td>
-                          <td className="px-4 py-3 text-[var(--muted)]">{softDeleted ? "Soft deleted" : "Active"}</td>
+                          <td className="px-4 py-3">
+                            <select
+                              value={row.isSoftDeleted ? "deleted" : attendanceStatus}
+                              onChange={(e) => {
+                                const newStatus = e.target.value;
+                                if (newStatus === "deleted") {
+                                  toggleSoftDelete();
+                                } else {
+                                  if (entryMode === "manual") {
+                                    setManualRows((rows) => {
+                                      const updated = rows.map((r) =>
+                                        (r as ManualRow).id === baseKey
+                                          ? { ...r, attendanceStatus: newStatus as "full_day" | "half_day" | "absent", isSoftDeleted: false }
+                                          : r
+                                      );
+                                      sessionStorage.setItem("manualTimesheetRows", JSON.stringify(updated));
+                                      return updated;
+                                    });
+                                  } else {
+                                    setResult((prev) => {
+                                      if (!prev) return prev;
+                                      const nextRows = [...prev.rows];
+                                      nextRows[idx] = { ...nextRows[idx], attendanceStatus: newStatus as "full_day" | "half_day" | "absent", isSoftDeleted: false };
+                                      persistUploadRows(nextRows);
+                                      return { ...prev, rows: nextRows };
+                                    });
+                                  }
+                                }
+                              }}
+                              className={`rounded-lg border px-2 py-1 text-xs font-semibold ${row.isSoftDeleted ? "border-red-200 bg-red-50 text-red-700" : getStatusColor(attendanceStatus)}`}
+                            >
+                              <option value="full_day">Full Day</option>
+                              <option value="half_day">Half Day</option>
+                              <option value="absent">Absent</option>
+                              {row.isSoftDeleted && <option value="deleted">Deleted</option>}
+                            </select>
+                          </td>
                           <td className="px-4 py-3 text-right">
                             <button
                               type="button"

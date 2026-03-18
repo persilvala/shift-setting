@@ -1,18 +1,24 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import type { PayrollEntry } from "@/lib/types";
 
-type PayrollEntryWithManual = PayrollEntry & {
-  manualAddition?: number;
-  manualDeduction?: number;
+type PayrollEntryData = {
+  employeeId: string;
+  employeeName: string;
+  attendanceDays: number;
+  halfDays: number;
+  absentDays: number;
+  basePayPerDay: number | null;
+  basePay: number;
+  addedValue: number;
+  subtractedValue: number;
+  netPay: number;
 };
 
 type SavePayrollRequest = {
   startDate: string;
   endDate: string;
   basePayPerDay: number;
-  overtimeRate: number;
-  payroll: PayrollEntryWithManual[];
+  payroll: PayrollEntryData[];
   timesheetId?: string;
 };
 
@@ -23,42 +29,70 @@ export async function POST(request: Request) {
       startDate,
       endDate,
       basePayPerDay,
-      overtimeRate,
       payroll,
       timesheetId,
     } = body;
 
-    // Calculate total net pay
-    const totalNetPay = payroll.reduce((sum, entry) => {
-      const manualAdd = entry.manualAddition ?? 0;
-      const manualDeduct = entry.manualDeduction ?? 0;
-      return sum + entry.netPay + manualAdd - manualDeduct;
-    }, 0);
+    const totalNetPay = payroll.reduce((sum, entry) => sum + entry.netPay, 0);
 
-    // Create payroll record
+    const entriesToCreate: {
+      employeeId: string;
+      attendanceDays: number;
+      halfDays: number;
+      absentDays: number;
+      basePay: number;
+      addedValue: number;
+      subtractedValue: number;
+      netPay: number;
+    }[] = [];
+
+    for (const entry of payroll) {
+      const employee = await prisma.employee.findFirst({
+        where: {
+          OR: [
+            { id: entry.employeeId },
+            { employeeName: entry.employeeName },
+          ],
+        },
+      });
+
+      if (employee) {
+        if (entry.basePayPerDay !== null && entry.basePayPerDay !== undefined) {
+          await prisma.employee.update({
+            where: { id: employee.id },
+            data: { basePayPerDay: entry.basePayPerDay },
+          });
+        }
+
+        entriesToCreate.push({
+          employeeId: employee.id,
+          attendanceDays: entry.attendanceDays,
+          halfDays: entry.halfDays,
+          absentDays: entry.absentDays,
+          basePay: entry.basePay,
+          addedValue: entry.addedValue,
+          subtractedValue: entry.subtractedValue,
+          netPay: entry.netPay,
+        });
+      }
+    }
+
+    if (entriesToCreate.length === 0) {
+      return NextResponse.json(
+        { ok: false, error: "No valid employees found for payroll entries" },
+        { status: 400 }
+      );
+    }
+
     const createdPayroll = await prisma.payroll.create({
       data: {
         startDate: new Date(startDate),
         endDate: new Date(endDate),
         basePayPerDay,
-        overtimeRate,
         totalNetPay,
+        timesheetId,
         entries: {
-          create: payroll.map((entry) => ({
-            employeeName: entry.employeeName,
-            employeeUserId: entry.userId,
-            department: entry.department,
-            workDays: entry.workDays,
-            workHours: entry.workHours,
-            overtimeHours: entry.overtimeHours,
-            basePay: entry.basePay,
-            overtimePay: entry.overtimePay,
-            totalAdditions: entry.totalAdditions,
-            totalDeductions: entry.totalDeductions,
-            netPay: entry.netPay,
-            manualAddition: entry.manualAddition ?? 0,
-            manualDeduction: entry.manualDeduction ?? 0,
-          })),
+          create: entriesToCreate,
         },
       },
       include: {
@@ -77,6 +111,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ok: true,
       payroll: createdPayroll,
+      employeesUpdated: entriesToCreate.length,
     });
   } catch (error) {
     console.error("Payroll save error", error);

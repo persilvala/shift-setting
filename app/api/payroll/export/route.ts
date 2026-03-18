@@ -1,13 +1,24 @@
 import { NextResponse } from "next/server";
-import type { PayrollEntry, Adjustment, TimesheetMeta } from "@/lib/types";
+import type { TimesheetMeta } from "@/lib/types";
 
 type ExportPayload = {
-  payroll?: PayrollEntry[];
+  payroll?: Array<{
+    employeeId: string;
+    employeeName: string;
+    startDate: string;
+    endDate: string;
+    attendanceDays: number;
+    halfDays: number;
+    absentDays: number;
+    basePayPerDay: number;
+    basePay: number;
+    addedValue: number;
+    subtractedValue: number;
+    netPay: number;
+  }>;
   startDate?: string;
   endDate?: string;
   basePayPerDay?: number;
-  overtimeRatePerHour?: number;
-  adjustments?: Record<string, Adjustment>;
   timesheetMeta?: TimesheetMeta | null;
 };
 
@@ -41,13 +52,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "Missing payroll period or rates" }, { status: 400 });
   }
 
-  const adjustments = payload.adjustments ?? {};
   const meta = payload.timesheetMeta ?? {};
 
   const headerRows: Array<Array<string | number | null | undefined>> = [
     ["Payroll period", `${payload.startDate} to ${payload.endDate}`],
     ["Base pay per day", money(payload.basePayPerDay)],
-    ["Overtime rate per hour", money(payload.overtimeRatePerHour ?? 0)],
   ];
 
   if (meta.format) headerRows.push(["Source file type", meta.format.toUpperCase()]);
@@ -57,45 +66,32 @@ export async function POST(request: Request) {
   headerRows.push([]);
 
   const tableHeader = [
-    "User ID",
     "Employee",
-    "Department",
-    "Work days",
-    "Work hours",
-    "OT hours",
-    "Base pay",
-    "OT pay",
-    "Auto additions",
-    "Auto deductions",
-    "Manual add",
-    "Manual deduct",
-    "Net pay",
-    "Adjusted net",
+    "Start Date",
+    "End Date",
+    "Full Days",
+    "Half Days",
+    "Absent Days",
+    "Base Pay/Day",
+    "Base Pay",
+    "Added (+)",
+    "Subtracted (-)",
+    "Net Pay",
   ];
 
-  const dataRows = payload.payroll.map((entry) => {
-    const adj = adjustments[entry.userId] ?? { addition: 0, deduction: 0 };
-    const manualAdd = Number(adj.addition ?? 0) || 0;
-    const manualDeduct = Number(adj.deduction ?? 0) || 0;
-    const adjustedNet = money(entry.netPay + manualAdd - manualDeduct);
-
-    return [
-      entry.userId,
-      entry.employeeName,
-      entry.department,
-      entry.workDays,
-      entry.workHours,
-      entry.overtimeHours,
-      money(entry.basePay).toFixed(2),
-      money(entry.overtimePay).toFixed(2),
-      money(entry.totalAdditions).toFixed(2),
-      money(entry.totalDeductions).toFixed(2),
-      money(manualAdd).toFixed(2),
-      money(manualDeduct).toFixed(2),
-      money(entry.netPay).toFixed(2),
-      adjustedNet.toFixed(2),
-    ];
-  });
+  const dataRows = payload.payroll.map((entry) => [
+    entry.employeeName,
+    entry.startDate,
+    entry.endDate,
+    entry.attendanceDays,
+    entry.halfDays,
+    entry.absentDays,
+    money(entry.basePayPerDay).toFixed(2),
+    money(entry.basePay).toFixed(2),
+    money(entry.addedValue).toFixed(2),
+    money(entry.subtractedValue).toFixed(2),
+    money(entry.netPay).toFixed(2),
+  ]);
 
   const csv = toCsv([...headerRows, tableHeader, ...dataRows]);
   const filename = `payroll-${payload.startDate}-to-${payload.endDate}.csv`;

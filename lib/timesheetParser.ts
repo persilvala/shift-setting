@@ -950,6 +950,7 @@ function parseAttendanceStatisticTable(rows: (string | number | Date | undefined
       leavePayNoPaid: leavePayNoPaid ?? null,
       payrollDeduction: payrollDeduction ?? null,
       remark: remark ?? null,
+      attendanceStatus: "full_day",
     });
   }
 
@@ -1037,6 +1038,7 @@ function parseShiftCodeTemplateSheet(
         userId: userId ?? meta.userId ?? null,
         template: "shift-code-table",
         raw: [shiftCode ?? ""],
+        attendanceStatus: "full_day",
       });
     }
   }

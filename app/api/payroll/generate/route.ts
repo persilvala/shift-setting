@@ -1,82 +1,91 @@
 import { NextResponse } from "next/server";
-import type { PayrollEntry } from "@/lib/types";
+import type { PayrollEntry, AttendanceStatus } from "@/lib/types";
 
 export type { PayrollEntry } from "@/lib/types";
+
+type AttendanceData = {
+  employeeId: string;
+  employeeName: string;
+  date: string;
+  attendanceStatus: AttendanceStatus;
+};
 
 type GeneratePayrollRequest = {
   startDate: string;
   endDate: string;
   basePayPerDay: number;
-  overtimeRatePerHour?: number;
-  timesheetData: Array<{
-    userId: string;
-    employeeName: string;
-    department: string;
-    workHours: number;
-    overtimeHours: number;
-    workDays: string;
-    lateMinutes: number;
-    earlyMinutes: number;
-    addPayNormal?: number;
-    addPayOvertime?: number;
-    addPayAllowance?: number;
-    payrollDeduction?: number;
-  }>;
+  attendanceData: AttendanceData[];
+};
+
+type PayrollEntryResult = {
+  employeeId: string;
+  employeeName: string;
+  startDate: string;
+  endDate: string;
+  attendanceDays: number;
+  halfDays: number;
+  absentDays: number;
+  basePayPerDay: number;
+  basePay: number;
+  addedValue: number;
+  subtractedValue: number;
+  netPay: number;
 };
 
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as GeneratePayrollRequest;
-    const { startDate, endDate, basePayPerDay, timesheetData, overtimeRatePerHour = 0 } = body;
+    const { startDate, endDate, basePayPerDay, attendanceData } = body;
 
-    const payroll: PayrollEntry[] = timesheetData.map((entry) => {
-      // Parse work days from string like "5/1" (normal/actual) or "5/0"
-      const workDaysMatch = entry.workDays?.match(/(\d+)\/(\d+)/);
-      const workDays = workDaysMatch ? parseInt(workDaysMatch[1], 10) : 0;
+    const byEmployee = new Map<string, {
+      employeeId: string;
+      employeeName: string;
+      attendanceDays: number;
+      halfDays: number;
+      absentDays: number;
+    }>();
 
-      const basePay = workDays * basePayPerDay;
-      const overtimePay = entry.overtimeHours * overtimeRatePerHour;
-
-      const additions: PayrollEntry["additions"] = [];
-      const deductions: PayrollEntry["deductions"] = [];
-
-      // Add pay from Excel (Normal, Overtime, Allowance)
-      if (entry.addPayNormal && entry.addPayNormal > 0) {
-        additions.push({ description: "Add Pay (Normal)", amount: entry.addPayNormal });
+    attendanceData.forEach((entry) => {
+      const key = entry.employeeId;
+      if (!byEmployee.has(key)) {
+        byEmployee.set(key, {
+          employeeId: entry.employeeId,
+          employeeName: entry.employeeName,
+          attendanceDays: 0,
+          halfDays: 0,
+          absentDays: 0,
+        });
       }
-      if (entry.addPayOvertime && entry.addPayOvertime > 0) {
-        additions.push({ description: "Add Pay (OT)", amount: entry.addPayOvertime });
+      const emp = byEmployee.get(key)!;
+      switch (entry.attendanceStatus) {
+        case "full_day":
+          emp.attendanceDays++;
+          break;
+        case "half_day":
+          emp.halfDays++;
+          break;
+        case "absent":
+          emp.absentDays++;
+          break;
       }
-      if (entry.addPayAllowance && entry.addPayAllowance > 0) {
-        additions.push({ description: "Allowance", amount: entry.addPayAllowance });
-      }
+    });
 
-      // Deductions from Excel
-      if (entry.payrollDeduction && entry.payrollDeduction > 0) {
-        deductions.push({ description: "Payroll Deduction", amount: entry.payrollDeduction });
-      }
-
-      const totalAdditions = additions.reduce((sum, a) => sum + a.amount, 0);
-      const totalDeductions = deductions.reduce((sum, d) => sum + d.amount, 0);
-
-      const netPay = basePay + overtimePay + totalAdditions - totalDeductions;
+    const payroll: PayrollEntryResult[] = Array.from(byEmployee.values()).map((emp) => {
+      const basePay = (emp.attendanceDays * basePayPerDay) + (emp.halfDays * basePayPerDay * 0.5);
+      const netPay = basePay;
 
       return {
-        userId: entry.userId,
-        employeeName: entry.employeeName,
-        department: entry.department,
+        employeeId: emp.employeeId,
+        employeeName: emp.employeeName,
         startDate,
         endDate,
-        workDays,
-        workHours: entry.workHours,
-        overtimeHours: entry.overtimeHours,
+        attendanceDays: emp.attendanceDays,
+        halfDays: emp.halfDays,
+        absentDays: emp.absentDays,
         basePayPerDay,
-        basePay,
-        overtimePay,
-        additions,
-        deductions,
-        totalAdditions,
-        totalDeductions,
+        basePay: Math.round(basePay * 100) / 100,
+        addedValue: 0,
+        subtractedValue: 0,
         netPay: Math.round(netPay * 100) / 100,
       };
     });

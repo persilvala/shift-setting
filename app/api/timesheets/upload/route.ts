@@ -39,7 +39,6 @@ export async function POST(request: Request) {
   const mime = file.type?.toLowerCase();
 
   try {
-    // Parse the file first
     let result;
     if (isExcel(mime, fileName) || isCsv(mime, fileName)) {
       const wb = XLSX.read(buffer, { type: 'buffer', raw: true });
@@ -55,7 +54,6 @@ export async function POST(request: Request) {
       );
     }
 
-    // Save to database
     const filteredRows = result.rows.filter((row) => {
       const hasName = Boolean(row.employeeName && row.employeeName.trim());
       const hasDate = Boolean(row.date);
@@ -68,6 +66,25 @@ export async function POST(request: Request) {
       return hasName && hasDate && (hasTimeOrHours || hasAnyTimeBlock);
     });
 
+    const uniqueEmployeeNames = [...new Set(filteredRows.map(row => row.employeeName).filter(Boolean))];
+
+    const employeeRecords = await Promise.all(
+      uniqueEmployeeNames.map(async (name) => {
+        const existing = await prisma.employee.findFirst({
+          where: { employeeName: name },
+        });
+        if (existing) {
+          return { name, employee: existing };
+        }
+        const employee = await prisma.employee.create({
+          data: { employeeName: name },
+        });
+        return { name, employee };
+      })
+    );
+
+    const employeeMap = new Map(employeeRecords.map(r => [r.name, r.employee]));
+
     const timesheet = await prisma.timesheet.create({
       data: {
         fileName: file.name,
@@ -76,35 +93,40 @@ export async function POST(request: Request) {
         endDate: new Date(result.endDate!),
         totalRows: filteredRows.length,
         rows: {
-          create: filteredRows.map((row) => ({
-            employeeName: row.employeeName,
-            userId: row.userId,
-            date: new Date(row.date!),
-            weekday: row.weekday,
-            dept: row.dept,
-            beforeNoonIn: row.beforeNoonIn,
-            beforeNoonOut: row.beforeNoonOut,
-            afterNoonIn: row.afterNoonIn,
-            afterNoonOut: row.afterNoonOut,
-            overtimeIn: row.overtimeIn,
-            overtimeOut: row.overtimeOut,
-            totalHours: row.totalHours,
-            workHours: row.workHours,
-            workHoursActual: row.workHoursActual,
-            overtimeHours: row.overtimeHours,
-            lateMinutes: row.lateMinutes,
-            earlyMinutes: row.earlyMinutes,
-            workDays: row.workDays,
-            tripDays: row.tripDays,
-            absenceDays: row.absenceDays,
-            leaveDays: row.leaveDays,
-            addPayNormal: row.addPayNormal,
-            addPayOvertime: row.addPayOvertime,
-            addPayAllowance: row.addPayAllowance,
-            payrollDeduction: row.payrollDeduction,
-            shiftCode: row.shiftCode,
-            remark: row.remark,
-          })),
+          create: filteredRows.map((row) => {
+            const employee = employeeMap.get(row.employeeName);
+            return {
+              employeeName: row.employeeName,
+              employeeId: employee?.id,
+              userId: row.userId,
+              date: new Date(row.date!),
+              weekday: row.weekday,
+              dept: row.dept,
+              beforeNoonIn: row.beforeNoonIn,
+              beforeNoonOut: row.beforeNoonOut,
+              afterNoonIn: row.afterNoonIn,
+              afterNoonOut: row.afterNoonOut,
+              overtimeIn: row.overtimeIn,
+              overtimeOut: row.overtimeOut,
+              totalHours: row.totalHours,
+              workHours: row.workHours,
+              workHoursActual: row.workHoursActual,
+              overtimeHours: row.overtimeHours,
+              lateMinutes: row.lateMinutes,
+              earlyMinutes: row.earlyMinutes,
+              workDays: row.workDays,
+              tripDays: row.tripDays,
+              absenceDays: row.absenceDays,
+              leaveDays: row.leaveDays,
+              addPayNormal: row.addPayNormal,
+              addPayOvertime: row.addPayOvertime,
+              addPayAllowance: row.addPayAllowance,
+              payrollDeduction: row.payrollDeduction,
+              shiftCode: row.shiftCode,
+              remark: row.remark,
+              attendanceStatus: row.attendanceStatus ?? 'full_day',
+            };
+          }),
         },
       },
       include: { rows: true },
@@ -115,7 +137,7 @@ export async function POST(request: Request) {
       fileName: timesheet.fileName,
       rowCount: timesheet.rows.length,
       uploadedAt: timesheet.uploadedAt,
-      skippedEmpty: result.rows.length - filteredRows.length,
+      employeesCreated: employeeRecords.filter(r => !employeeMap.get(r.name)).length,
     });
 
     return NextResponse.json({

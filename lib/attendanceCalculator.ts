@@ -1,22 +1,21 @@
 import type { AttendanceRow } from "./excelParser";
+import type { AttendanceStatus } from "./types";
 
 export type AttendanceSummary = {
   employeeName: string;
   dept?: string;
   userId?: string;
   presentDates: string;
-  present: number;
-  leave: number;
-  absent: number;
+  attendanceDays: number;
+  halfDays: number;
+  absentDays: number;
+  leaveDays: number;
   hours: number;
-  overtimeHours: number;
-  lateMinutes: number;
-  underMinutes: number;
 };
 
-const DEFAULT_SHIFT_START = 8 * 60; // 08:00
-const DEFAULT_SHIFT_END = 17 * 60; // 17:00
-const DEFAULT_BREAK = 60; // minutes
+const DEFAULT_SHIFT_START = 8 * 60;
+const DEFAULT_SHIFT_END = 17 * 60;
+const DEFAULT_BREAK = 60;
 
 function timeToMinutes(value?: string) {
   if (!value) return null;
@@ -43,6 +42,14 @@ function minutesToHours(min: number) {
   return Math.round((min / 60) * 100) / 100;
 }
 
+function getAttendanceStatus(status: string | undefined, hasWork: boolean): AttendanceStatus {
+  if (!status) return hasWork ? "full_day" : "absent";
+  const lower = status.toLowerCase();
+  if (lower.includes("absent")) return "absent";
+  if (lower.includes("half") || lower.includes("partial")) return "half_day";
+  return hasWork ? "full_day" : "absent";
+}
+
 export function summarizeAttendance(rows: AttendanceRow[]): AttendanceSummary[] {
   const byEmployee = new Map<string, AttendanceSummary & { dates: Set<string> }>();
 
@@ -55,13 +62,11 @@ export function summarizeAttendance(rows: AttendanceRow[]): AttendanceSummary[] 
         dept: row.dept,
         userId: row.userId,
         presentDates: "",
-        present: 0,
-        leave: 0,
-        absent: 0,
+        attendanceDays: 0,
+        halfDays: 0,
+        absentDays: 0,
+        leaveDays: 0,
         hours: 0,
-        overtimeHours: 0,
-        lateMinutes: 0,
-        underMinutes: 0,
         dates: new Set<string>(),
       });
     }
@@ -69,43 +74,31 @@ export function summarizeAttendance(rows: AttendanceRow[]): AttendanceSummary[] 
     const record = byEmployee.get(key)!;
     const date = row.date;
     const beforeIn = timeToMinutes(row.beforeNoonIn);
-    const afterOut = timeToMinutes(row.afterNoonOut);
     const afterIn = timeToMinutes(row.afterNoonIn);
-    const beforeOut = timeToMinutes(row.beforeNoonOut);
-    const otIn = timeToMinutes(row.overtimeIn);
-    const otOut = timeToMinutes(row.overtimeOut);
+    const afterOut = timeToMinutes(row.afterNoonOut);
 
     const hasWork = beforeIn !== null || afterIn !== null || afterOut !== null;
-    const status = (row.status || "").toLowerCase();
+    const attendanceStatus = getAttendanceStatus(row.status, hasWork);
 
-    if (status.includes("leave")) {
-      record.leave += 1;
-    } else if (status.includes("absent")) {
-      record.absent += 1;
-    } else if (hasWork) {
-      record.present += 1;
+    if (attendanceStatus === "absent" && !hasWork) {
+      record.absentDays += 1;
+    } else if (attendanceStatus === "half_day") {
+      record.halfDays += 1;
+    } else if (attendanceStatus === "full_day" || hasWork) {
+      record.attendanceDays += 1;
       if (date) record.dates.add(date);
-    } else if (date) {
-      record.absent += 1;
+    }
+
+    const lowerStatus = (row.status || "").toLowerCase();
+    if (lowerStatus.includes("leave")) {
+      record.leaveDays += 1;
     }
 
     if (hasWork) {
       const start = beforeIn ?? afterIn ?? DEFAULT_SHIFT_START;
-      const end = afterOut ?? beforeOut ?? DEFAULT_SHIFT_END;
+      const end = afterOut ?? DEFAULT_SHIFT_END;
       const workMinutes = Math.max(0, (end - start) - DEFAULT_BREAK);
       record.hours += minutesToHours(workMinutes);
-
-      if (otIn !== null && otOut !== null && otOut > otIn) {
-        record.overtimeHours += minutesToHours(otOut - otIn);
-      }
-
-      if (beforeIn !== null && beforeIn > DEFAULT_SHIFT_START) {
-        record.lateMinutes += beforeIn - DEFAULT_SHIFT_START;
-      }
-
-      if (afterOut !== null && afterOut < DEFAULT_SHIFT_END) {
-        record.underMinutes += DEFAULT_SHIFT_END - afterOut;
-      }
     }
   });
 
@@ -119,13 +112,11 @@ export function summarizeAttendance(rows: AttendanceRow[]): AttendanceSummary[] 
       dept: entry.dept,
       userId: entry.userId,
       presentDates,
-      present: entry.present,
-      leave: entry.leave,
-      absent: entry.absent,
+      attendanceDays: entry.attendanceDays,
+      halfDays: entry.halfDays,
+      absentDays: entry.absentDays,
+      leaveDays: entry.leaveDays,
       hours: Math.round(entry.hours * 100) / 100,
-      overtimeHours: Math.round(entry.overtimeHours * 100) / 100,
-      lateMinutes: entry.lateMinutes,
-      underMinutes: entry.underMinutes,
     };
   });
 }

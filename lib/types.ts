@@ -1,5 +1,7 @@
 // Shared types for the Shift Setting application
 
+export type AttendanceStatus = "absent" | "full_day" | "half_day";
+
 export type ParsedTimesheetRow = {
   employeeName: string;
   date: string | null;
@@ -15,14 +17,14 @@ export type ParsedTimesheetRow = {
   template?: string | null;
   raw?: string[];
   isSoftDeleted?: boolean;
-  // Time card fields
+  employeeId?: string;
+  attendanceStatus?: AttendanceStatus;
   beforeNoonIn?: string | null;
   beforeNoonOut?: string | null;
   afterNoonIn?: string | null;
   afterNoonOut?: string | null;
   overtimeIn?: string | null;
   overtimeOut?: string | null;
-  // Payroll fields
   workHours?: number | null;
   workHoursActual?: number | null;
   overtimeHours?: number | null;
@@ -36,7 +38,6 @@ export type ParsedTimesheetRow = {
   absenceDays?: number | null;
   leaveDays?: number | null;
   shiftCode?: string | null;
-  // Additional pay fields
   addPayNormal?: number | null;
   addPayOvertime?: number | null;
   addPayAllowance?: number | null;
@@ -46,23 +47,42 @@ export type ParsedTimesheetRow = {
   remark?: string | null;
 };
 
-export type PayrollEntry = {
-  userId: string;
+export type Employee = {
+  id: string;
   employeeName: string;
-  department: string;
+  basePayPerDay: number | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type PayrollEntry = {
+  id: string;
+  payrollId: string;
+  timesheetRowId: string | null;
+  employeeId: string;
+  addedValue: number;
+  subtractedValue: number;
+  isEdited: boolean;
+  createdAt: Date;
+};
+
+export type PayrollEntryDisplay = {
+  id: string;
+  payrollId: string;
+  employeeId: string;
+  employeeName: string;
+  timesheetRowId: string | null;
+  attendanceStatus: AttendanceStatus;
+  addedValue: number;
+  subtractedValue: number;
+  isEdited: boolean;
+  workDays: number;
+  halfDays: number;
+  absentDays: number;
+  basePay: number;
+  netPay: number;
   startDate: string;
   endDate: string;
-  workDays: number;
-  workHours: number;
-  overtimeHours: number;
-  basePayPerDay: number;
-  basePay: number;
-  overtimePay: number;
-  additions: Array<{ description: string; amount: number }>;
-  deductions: Array<{ description: string; amount: number }>;
-  totalAdditions: number;
-  totalDeductions: number;
-  netPay: number;
 };
 
 export type TimesheetMeta = {
@@ -87,6 +107,7 @@ export type DashboardRow = {
   lateMinutes: number | null;
   earlyMinutes: number | null;
   absenceDays: number | null;
+  attendanceStatus: AttendanceStatus;
   leaveDays: number | null;
 };
 
@@ -104,11 +125,12 @@ export type Adjustment = {
 
 export type SavedPayroll = {
   id: string;
+  timesheetId: string | null;
   startDate: string;
   endDate: string;
   basePayPerDay: number;
-  overtimeRate: number;
   totalNetPay: number;
+  isEdited: boolean;
   generatedAt: string;
   _count: { entries: number };
 };

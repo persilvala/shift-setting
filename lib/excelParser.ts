@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx";
+import type { AttendanceStatus } from "./types";
 
 export type AttendanceRow = {
   employeeName: string;
@@ -12,6 +13,7 @@ export type AttendanceRow = {
   overtimeIn?: string;
   overtimeOut?: string;
   status?: string;
+  attendanceStatus?: AttendanceStatus;
 };
 
 const HEADER_ALIASES: Record<string, string[]> = {
@@ -82,6 +84,14 @@ function toString(value: unknown) {
   return s.length ? s : undefined;
 }
 
+function deriveAttendanceStatus(status: string | undefined, hasWork: boolean): AttendanceStatus {
+  if (!status) return hasWork ? "full_day" : "absent";
+  const lower = status.toLowerCase();
+  if (lower.includes("absent")) return "absent";
+  if (lower.includes("half") || lower.includes("partial")) return "half_day";
+  return hasWork ? "full_day" : "absent";
+}
+
 export function parseExcelFile(buffer: ArrayBuffer): AttendanceRow[] {
   const workbook = XLSX.read(buffer, { type: "array", raw: true });
   const rows: AttendanceRow[] = [];
@@ -111,6 +121,9 @@ export function parseExcelFile(buffer: ArrayBuffer): AttendanceRow[] {
 
       if (!employeeName && !date && !beforeNoonIn && !afterNoonOut) return;
 
+      const hasWork = !!(beforeNoonIn || afterNoonIn || afterNoonOut);
+      const attendanceStatus = deriveAttendanceStatus(status, hasWork);
+
       rows.push({
         employeeName: employeeName ?? "",
         dept: dept ?? undefined,
@@ -123,6 +136,7 @@ export function parseExcelFile(buffer: ArrayBuffer): AttendanceRow[] {
         overtimeIn,
         overtimeOut,
         status,
+        attendanceStatus,
       });
     });
   });
