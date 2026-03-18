@@ -14,6 +14,7 @@ export type ParsedTimesheetRow = {
   userId?: string | null;
   template?: string | null;
   raw?: string[];
+  isSoftDeleted?: boolean;
   // Time card fields
   beforeNoonIn?: string | null;
   beforeNoonOut?: string | null;

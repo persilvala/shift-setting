@@ -643,7 +643,6 @@ export default function PayrollPage() {
                       <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Days</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Hours</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Base pay</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">OT pay</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Auto add</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Auto deduct</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Add (+)</th>
@@ -664,9 +663,8 @@ export default function PayrollPage() {
                           <td className="px-4 py-3 text-[var(--muted)]">{entry.workDays}</td>
                           <td className="px-4 py-3 text-[var(--muted)]">{entry.workHours.toFixed(2)}</td>
                           <td className="px-4 py-3 text-[var(--muted)]">{formatMoney(entry.basePay)}</td>
-                          <td className="px-4 py-3 text-[var(--muted)]">{formatMoney(entry.overtimePay)}</td>
-                          <td className="px-4 py-3 text-[var(--muted)]">{formatMoney(entry.totalAdditions)}</td>
-                          <td className="px-4 py-3 text-[var(--muted)]">{formatMoney(entry.totalDeductions)}</td>
+                           <td className="px-4 py-3 text-[var(--muted)]">{formatMoney(entry.totalAdditions)}</td>
+                           <td className="px-4 py-3 text-[var(--muted)]">{formatMoney(entry.totalDeductions)}</td>
                           <td className="px-4 py-3">
                             <input
                               type="number"
@@ -781,7 +779,6 @@ export default function PayrollPage() {
                       <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Generated</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Entries</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Base Pay/Day</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">OT Rate/Hour</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Total Net</th>
                     </tr>
                   </thead>
@@ -796,8 +793,7 @@ export default function PayrollPage() {
                         </td>
                         <td className="px-4 py-3 text-[var(--muted)]">{payroll._count.entries}</td>
                         <td className="px-4 py-3 text-[var(--muted)]">{formatMoney(payroll.basePayPerDay)}</td>
-                        <td className="px-4 py-3 text-[var(--muted)]">{formatMoney(payroll.overtimeRate)}</td>
-                        <td className="px-4 py-3 font-bold text-[var(--accent)]">{formatMoney(payroll.totalNetPay)}</td>
+                         <td className="px-4 py-3 font-bold text-[var(--accent)]">{formatMoney(payroll.totalNetPay)}</td>
                       </tr>
                     ))}
                   </tbody>
