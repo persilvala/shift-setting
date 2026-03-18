@@ -5,11 +5,14 @@ import { TopNav } from "@/components/layout/TopNav";
 import { PageHeader } from "@/components/PageHeader";
 import { clearAdminLogs, getAdminLogs } from "@/lib/adminLogs";
 import type { AdminLogEntry } from "@/lib/adminLogs";
+import { Pagination } from "@/components/Pagination";
 
 export default function AdminLogsPage() {
   const [logs, setLogs] = useState<AdminLogEntry[]>([]);
   const [filterUser, setFilterUser] = useState("");
   const [filterDate, setFilterDate] = useState("");
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 10;
 
   const loadLogs = () => {
     setLogs(getAdminLogs());
@@ -19,6 +22,10 @@ export default function AdminLogsPage() {
     loadLogs();
   }, []);
 
+  useEffect(() => {
+    setPage(1);
+  }, [filterUser, filterDate]);
+
   const filteredLogs = useMemo(() => {
     return logs.filter((log) => {
       const matchUser = filterUser ? log.admin.toLowerCase().includes(filterUser.toLowerCase()) : true;
@@ -26,6 +33,10 @@ export default function AdminLogsPage() {
       return matchUser && matchDate;
     });
   }, [filterDate, filterUser, logs]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredLogs.length / PAGE_SIZE));
+  const pageSafe = Math.min(page, totalPages);
+  const paginatedLogs = filteredLogs.slice((pageSafe - 1) * PAGE_SIZE, pageSafe * PAGE_SIZE);
 
   const statusBadge = (status: AdminLogEntry["status"]) => {
     const palette: Record<string, string> = {
@@ -105,12 +116,12 @@ export default function AdminLogsPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--border)]/70 text-[var(--foreground)]">
-                  {filteredLogs.length === 0 ? (
+                  {paginatedLogs.length === 0 ? (
                     <tr>
                       <td colSpan={5} className="px-4 py-4 text-center text-[var(--muted)]">No admin logs yet.</td>
                     </tr>
                   ) : (
-                    filteredLogs.map((log) => (
+                    paginatedLogs.map((log) => (
                       <tr key={log.id} className="hover:bg-[var(--surface)]/60">
                         <td className="px-4 py-3 font-semibold text-[var(--foreground)]">{log.action}</td>
                         <td className="px-4 py-3 text-[var(--muted)]">{log.admin}</td>
@@ -125,6 +136,14 @@ export default function AdminLogsPage() {
                 </tbody>
               </table>
             </div>
+            </div>
+          <div className="mt-4 flex items-center justify-between text-sm text-[var(--muted)]">
+            <Pagination
+              page={pageSafe}
+              totalPages={totalPages}
+              onChange={setPage}
+            />
+            <span className="text-xs">{filteredLogs.length} record(s)</span>
           </div>
         </section>
       </main>

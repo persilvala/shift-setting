@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createAdmin, deleteAdmin } from "@/actions/auth";
 import { PageHeader } from "@/components/PageHeader";
+import { Pagination } from "@/components/Pagination";
 
 type Admin = {
   id: string;
@@ -23,6 +24,16 @@ export function AdminList({
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 10;
+
+  useEffect(() => {
+    setPage(1);
+  }, [admins]);
+
+  const totalPages = Math.max(1, Math.ceil(admins.length / PAGE_SIZE));
+  const pageSafe = Math.min(page, totalPages);
+  const paginatedAdmins = admins.slice((pageSafe - 1) * PAGE_SIZE, pageSafe * PAGE_SIZE);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -151,7 +162,7 @@ export function AdminList({
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border)]/70 bg-white">
-              {admins.map((admin) => (
+              {paginatedAdmins.map((admin) => (
                 <tr key={admin.id} className="hover:bg-[var(--surface)]/60">
                   <td className="px-4 py-4 font-semibold text-[var(--foreground)]">
                     {admin.username}
@@ -185,8 +196,13 @@ export function AdminList({
                   </td>
                 </tr>
               ))}
-            </tbody>
-          </table>
+              </tbody>
+            </table>
+          </div>
+
+        <div className="mt-4 flex items-center justify-between text-sm text-[var(--muted)]">
+          <Pagination page={pageSafe} totalPages={totalPages} onChange={setPage} />
+          <span className="text-xs">{admins.length} admin(s)</span>
         </div>
       </section>
     </main>

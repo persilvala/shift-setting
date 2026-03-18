@@ -5,6 +5,7 @@ import { TopNav } from "@/components/layout/TopNav";
 import { PageHeader } from "@/components/PageHeader";
 import type { ParsedTimesheetRow, PayrollEntry, TimesheetMeta, Adjustment, SavedPayroll } from "@/lib/types";
 import { addAdminLog } from "@/lib/adminLogs";
+import { Pagination } from "@/components/Pagination";
 
 type PayrollData = {
   payroll: PayrollEntry[];
@@ -91,13 +92,17 @@ export default function PayrollPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [payrollPage, setPayrollPage] = useState(1);
+  const [shiftPage, setShiftPage] = useState(1);
+  const [savedPage, setSavedPage] = useState(1);
+  const PAGE_SIZE = 10;
 
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [basePayPerDay, setBasePayPerDay] = useState<number>(0);
   const [overtimeRatePerHour, setOvertimeRatePerHour] = useState<number>(0);
   const [adjustments, setAdjustments] = useState<Record<string, Adjustment>>({});
-  const [selectedUser, setSelectedUser] = useState<string>("all");
+  const [selectedUser, setSelectedUser] = useState<string>("");
   const [pendingPayroll, setPendingPayroll] = useState<{
     aggregated: ReturnType<typeof buildAggregatedTimesheet> | null;
     scopedRows: ParsedTimesheetRow[];
@@ -165,6 +170,14 @@ export default function PayrollPage() {
     }
   }, []);
 
+  useEffect(() => {
+    setPayrollPage(1);
+  }, [payrollData?.payroll?.length]);
+
+  useEffect(() => {
+    setSavedPage(1);
+  }, [savedPayrolls.length]);
+
   const employees = useMemo(() => {
     return Array.from(new Set(timesheetData.map((row) => row.employeeName).filter(Boolean))).sort((a, b) => a.localeCompare(b));
   }, [timesheetData]);
@@ -173,26 +186,45 @@ export default function PayrollPage() {
     if (!timesheetData.length) return [] as ParsedTimesheetRow[];
     const start = startDate ? new Date(startDate) : null;
     const end = endDate ? new Date(endDate) : null;
+    const scoped = selectedUser.trim().toLowerCase();
     return timesheetData.filter((row) => {
       if (!row.date) return false;
       const d = new Date(row.date);
       if (Number.isNaN(d.getTime())) return false;
       if (start && d < start) return false;
       if (end && d > end) return false;
-      if (selectedUser !== "all") {
-        const key = row.userId || row.employeeName;
+      if (scoped) {
+        const key = row.userId || row.employeeName || "";
         if (!key) return false;
-        if (key !== selectedUser && row.employeeName !== selectedUser) return false;
+        if (!key.toLowerCase().includes(scoped) && !(row.employeeName || "").toLowerCase().includes(scoped)) return false;
       }
       return true;
     });
   }, [endDate, selectedUser, startDate, timesheetData]);
+
+  useEffect(() => {
+    setShiftPage(1);
+  }, [filteredShifts.length]);
 
   const payrollLookup = useMemo(() => {
     const map = new Map<string, PayrollEntry>();
     payrollData?.payroll.forEach((entry) => map.set(entry.employeeName, entry));
     return map;
   }, [payrollData]);
+
+  const payrollTotalPages = payrollData ? Math.max(1, Math.ceil(payrollData.payroll.length / PAGE_SIZE)) : 1;
+  const payrollPageSafe = Math.min(payrollPage, payrollTotalPages);
+  const paginatedPayroll = payrollData
+    ? payrollData.payroll.slice((payrollPageSafe - 1) * PAGE_SIZE, payrollPageSafe * PAGE_SIZE)
+    : [];
+
+  const shiftTotalPages = Math.max(1, Math.ceil(filteredShifts.length / PAGE_SIZE));
+  const shiftPageSafe = Math.min(shiftPage, shiftTotalPages);
+  const paginatedShifts = filteredShifts.slice((shiftPageSafe - 1) * PAGE_SIZE, shiftPageSafe * PAGE_SIZE);
+
+  const savedTotalPages = savedPayrolls.length ? Math.max(1, Math.ceil(savedPayrolls.length / PAGE_SIZE)) : 1;
+  const savedPageSafe = Math.min(savedPage, savedTotalPages);
+  const paginatedSaved = savedPayrolls.slice((savedPageSafe - 1) * PAGE_SIZE, savedPageSafe * PAGE_SIZE);
 
   const handleGeneratePayroll = () => {
     setError(null);
@@ -238,12 +270,13 @@ export default function PayrollPage() {
       return d >= start && d <= end;
     });
 
-    const scopedRows = selectedUser === "all"
-      ? inRange
-      : inRange.filter((row) => {
-          const key = row.userId || row.employeeName;
-          return key === selectedUser || row.employeeName === selectedUser;
-        });
+    const scoped = selectedUser.trim().toLowerCase();
+    const scopedRows = scoped
+      ? inRange.filter((row) => {
+          const key = (row.userId || row.employeeName || "").toLowerCase();
+          return key.includes(scoped);
+        })
+      : inRange;
 
     if (!scopedRows.length) {
       setError("No attended shifts match the selected user/date range.");
@@ -251,7 +284,7 @@ export default function PayrollPage() {
       return;
     }
 
-    const lockKey = `${selectedUser}|${startDate}|${endDate}`;
+    const lockKey = `${selectedUser.trim().toLowerCase() || "all"}|${startDate}|${endDate}`;
     if (locks.includes(lockKey)) {
       setError("Payroll already generated for this user and date range.");
       addAdminLog({ action: "Payroll validation", status: "Failed", description: "Duplicate payroll prevented." });
@@ -491,18 +524,19 @@ export default function PayrollPage() {
           <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
             <div>
               <label className="text-sm font-semibold text-[var(--muted)]">User scope</label>
-              <select
+              <input
+                type="search"
                 value={selectedUser}
                 onChange={(e) => setSelectedUser(e.target.value)}
+                placeholder="Search user"
+                list="payroll-user-suggestions"
                 className="mt-1 w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
-              >
-                <option value="all">All users</option>
+              />
+              <datalist id="payroll-user-suggestions">
                 {employees.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
+                  <option key={name} value={name} />
                 ))}
-              </select>
+              </datalist>
             </div>
             <div>
               <label className="text-sm font-semibold text-[var(--muted)]">Start date</label>
@@ -562,7 +596,7 @@ export default function PayrollPage() {
               </button>
             )}
             <span className="rounded-full border border-[var(--border)] bg-white px-3 py-1 text-xs font-semibold text-[var(--muted)]">
-              In scope: {filteredShifts.length} shifts · {selectedUser === "all" ? `${employees.length || 0} employee(s)` : selectedUser}
+              In scope: {filteredShifts.length} shift(s) · {selectedUser.trim() ? `user match: "${selectedUser}"` : `${employees.length || 0} employee(s)`}
             </span>
             {error && <span className="text-sm font-semibold text-red-600">{error}</span>}
             {success && <span className="text-sm font-semibold text-emerald-600">{success}</span>}
@@ -618,7 +652,7 @@ export default function PayrollPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--border)]/70 text-[var(--foreground)]">
-                    {payrollData.payroll.map((entry) => {
+                    {paginatedPayroll.map((entry) => {
                       const adj = adjustments[entry.userId] ?? { addition: 0, deduction: 0 };
                       const adjustedNet = entry.netPay + (adj.addition ?? 0) - (adj.deduction ?? 0);
                       return (
@@ -658,6 +692,10 @@ export default function PayrollPage() {
                   </tbody>
                 </table>
               </div>
+              <div className="flex items-center justify-between border-t border-[var(--border)] bg-white/90 px-4 py-3 text-sm text-[var(--muted)]">
+                <Pagination page={payrollPageSafe} totalPages={payrollTotalPages} onChange={setPayrollPage} />
+                <span className="text-xs">{payrollData.payroll.length} payroll row(s)</span>
+              </div>
             </div>
           </section>
         )}
@@ -687,12 +725,12 @@ export default function PayrollPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--border)]/70 text-[var(--foreground)]">
-                  {filteredShifts.length === 0 ? (
+                  {paginatedShifts.length === 0 ? (
                     <tr>
                       <td colSpan={7} className="px-4 py-4 text-center text-[var(--muted)]">No shifts found for the current filters.</td>
                     </tr>
                   ) : (
-                    filteredShifts.map((row, idx) => {
+                    paginatedShifts.map((row, idx) => {
                       const status = row.issues && row.issues.length > 0 ? "Attention" : "Present";
                       const payrollRecord = payrollLookup.get(row.employeeName ?? "");
                       return (
@@ -716,6 +754,10 @@ export default function PayrollPage() {
                   )}
                 </tbody>
               </table>
+            </div>
+            <div className="flex items-center justify-between border-t border-[var(--border)] bg-white/90 px-4 py-3 text-sm text-[var(--muted)]">
+              <Pagination page={shiftPageSafe} totalPages={shiftTotalPages} onChange={setShiftPage} />
+              <span className="text-xs">{filteredShifts.length} shift(s)</span>
             </div>
           </div>
         </section>
@@ -744,7 +786,7 @@ export default function PayrollPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--border)]/70 text-[var(--foreground)]">
-                    {savedPayrolls.map((payroll) => (
+                    {paginatedSaved.map((payroll) => (
                       <tr key={payroll.id} className="hover:bg-[var(--surface)]/60">
                         <td className="px-4 py-3 font-semibold text-[var(--foreground)]">
                           {new Date(payroll.startDate).toLocaleDateString()} – {new Date(payroll.endDate).toLocaleDateString()}
@@ -760,6 +802,10 @@ export default function PayrollPage() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+              <div className="flex items-center justify-between border-t border-[var(--border)] bg-white/90 px-4 py-3 text-sm text-[var(--muted)]">
+                <Pagination page={savedPageSafe} totalPages={savedTotalPages} onChange={setSavedPage} />
+                <span className="text-xs">{savedPayrolls.length} saved payroll(s)</span>
               </div>
             </div>
           </section>

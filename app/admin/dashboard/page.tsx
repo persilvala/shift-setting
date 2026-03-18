@@ -7,6 +7,7 @@ import type { ParsedTimesheetRow, DashboardRow, FilterState } from "@/lib/types"
 import { UploadTimesheet } from "@/components/UploadTimesheet";
 import { AttendanceSummaryTable } from "@/components/AttendanceSummaryTable";
 import type { AttendanceSummary } from "@/lib/attendanceCalculator";
+import { Pagination } from "@/components/Pagination";
 
 const initialFilters: FilterState = {
   employee: "",
@@ -71,6 +72,8 @@ export default function DashboardPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [payrollSummary, setPayrollSummary] = useState<PayrollDashboardSummary | null>(null);
   const [attendanceSummary, setAttendanceSummary] = useState<AttendanceSummary[]>([]);
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 10;
 
   const refreshData = async () => {
     setRefreshing(true);
@@ -236,6 +239,10 @@ export default function DashboardPage() {
     });
   }, [filters, activeRows]);
 
+  useEffect(() => {
+    setPage(1);
+  }, [filters, activeRows.length]);
+
   const aggregates = useMemo(() => {
     const byEmployee = new Map<
       string,
@@ -310,6 +317,10 @@ export default function DashboardPage() {
       attendance,
     };
   }, [filteredRows]);
+
+  const totalPages = Math.max(1, Math.ceil((aggregates.attendance?.length ?? 0) / PAGE_SIZE));
+  const pageSafe = Math.min(page, totalPages);
+  const paginatedAttendance = aggregates.attendance?.slice((pageSafe - 1) * PAGE_SIZE, pageSafe * PAGE_SIZE) ?? [];
 
   const hasData = activeRows.length > 0;
 
@@ -498,9 +509,9 @@ export default function DashboardPage() {
             <span className="rounded-full border border-[var(--border)] bg-white px-3 py-1 text-xs font-semibold text-[var(--muted)]">Employees: {aggregates.employees}</span>
           </div>
 
-          <div className="mt-5 overflow-hidden rounded-2xl border border-[var(--border)] bg-white/90 shadow-[0_12px_32px_rgba(16,40,94,0.06)]">
-            <div className="overflow-x-auto">
-              <table className="min-w-[960px] w-full text-sm">
+            <div className="mt-5 overflow-hidden rounded-2xl border border-[var(--border)] bg-white/90 shadow-[0_12px_32px_rgba(16,40,94,0.06)]">
+              <div className="overflow-x-auto">
+                <table className="min-w-[960px] w-full text-sm">
                 <thead className="bg-[var(--surface)] text-[var(--muted)]">
                   <tr>
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Employee</th>
@@ -517,14 +528,14 @@ export default function DashboardPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--border)]/70 text-[var(--foreground)]">
-                  {!hasData || aggregates.attendance.length === 0 ? (
+                  {!hasData || paginatedAttendance.length === 0 ? (
                     <tr>
                       <td colSpan={9} className="px-4 py-4 text-center text-[var(--muted)]">
                         {hasData ? "No rows match the current filters." : "Upload a timesheet to populate the dashboard."}
                       </td>
                     </tr>
                   ) : (
-                    aggregates.attendance.map((entry) => (
+                    paginatedAttendance.map((entry) => (
                       <tr key={entry.employeeName} className="hover:bg-[var(--surface)]/60">
                         <td className="px-4 py-3 font-semibold text-[var(--foreground)]">{entry.employeeName}</td>
                         <td className="px-4 py-3 text-[var(--muted)]">{entry.dept || "—"}</td>
@@ -541,6 +552,10 @@ export default function DashboardPage() {
                   )}
                 </tbody>
               </table>
+            </div>
+            <div className="flex items-center justify-between border-t border-[var(--border)] bg-white/90 px-4 py-3 text-sm text-[var(--muted)]">
+              <Pagination page={pageSafe} totalPages={totalPages} onChange={setPage} />
+              <span className="text-xs">{aggregates.attendance.length} employee(s)</span>
             </div>
           </div>
         </section>
