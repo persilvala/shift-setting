@@ -1339,28 +1339,23 @@ export function parseExcelTimesheet(buffer: Buffer): ParseResult {
     return hasTime;
   });
 
-  // Deduplicate Time Card rows: keep one row per employee+date+weekday, preferring rows with time data
+  // Deduplicate rows: enforce one record per employee/date, preferring rows with more time data
   const dedupMap = new Map<string, ParsedTimesheetRow>();
   for (const row of cleaned) {
+    const normalizedName = (row.userId || row.employeeName || "").trim();
+    const normalizedDate = (row.date || "").trim();
+    if (!normalizedName || !normalizedDate) continue;
+
     if (row.template === "time-card") {
-      // Use userId if available, otherwise fall back to employeeName
-      const identifier = row.userId || row.employeeName;
-      const key = `${identifier}|${row.date}|${row.weekday}`;
+      const key = `${normalizedName.toLowerCase()}|${normalizedDate}|${row.weekday ?? ""}`;
       const existing = dedupMap.get(key);
-      if (!existing) {
+      if (!existing || countTimeFields(row) > countTimeFields(existing)) {
         dedupMap.set(key, row);
-      } else {
-        // Prefer row with more time data
-        const existingTimeCount = countTimeFields(existing);
-        const newRowCount = countTimeFields(row);
-        if (newRowCount > existingTimeCount) {
-          dedupMap.set(key, row);
-        }
       }
     } else {
-      // Non-time-card rows: use employee+date as key
-      const key = `other|${row.employeeName}|${row.date}`;
-      if (!dedupMap.has(key)) {
+      const key = `other|${normalizedName.toLowerCase()}|${normalizedDate}`;
+      const existing = dedupMap.get(key);
+      if (!existing || countTimeFields(row) > countTimeFields(existing)) {
         dedupMap.set(key, row);
       }
     }

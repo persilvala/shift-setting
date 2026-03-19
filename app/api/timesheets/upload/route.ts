@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { parseExcelTimesheet } from '@/lib/timesheetParser';
+import type { ParsedTimesheetRow, AttendanceStatus } from '@/lib/types';
 import { prisma } from '@/lib/db';
 import * as XLSX from 'xlsx';
 
@@ -23,6 +24,29 @@ function isPdf(mime: string | undefined, name: string) {
 function isCsv(mime: string | undefined, name: string) {
   const loweredMime = mime?.toLowerCase() ?? '';
   return loweredMime.includes('csv') || name.endsWith('.csv');
+}
+
+function countTimeFields(row: ParsedTimesheetRow) {
+  let count = 0;
+  if (row.beforeNoonIn) count++;
+  if (row.beforeNoonOut) count++;
+  if (row.afterNoonIn) count++;
+  if (row.afterNoonOut) count++;
+  if (row.overtimeIn) count++;
+  if (row.overtimeOut) count++;
+  if (row.timeIn) count++;
+  if (row.timeOut) count++;
+  if (row.totalHours) count++;
+  return count;
+}
+
+function normalizeParsedRow(row: ParsedTimesheetRow): ParsedTimesheetRow {
+  return {
+    ...row,
+    employeeName: row.employeeName?.trim() ?? '',
+    dept: row.dept?.trim() ?? null,
+    attendanceStatus: (row.attendanceStatus ?? 'full_day') as AttendanceStatus,
+  };
 }
 
 export async function POST(request: Request) {
@@ -54,19 +78,43 @@ export async function POST(request: Request) {
       );
     }
 
-    const filteredRows = result.rows.filter((row) => {
-      const hasName = Boolean(row.employeeName && row.employeeName.trim());
-      const hasDate = Boolean(row.date);
-      const hasTimeOrHours = Boolean(row.timeIn || row.timeOut || row.totalHours || row.workHours || row.workHoursActual);
-      const hasAnyTimeBlock = Boolean(
-        row.beforeNoonIn || row.beforeNoonOut ||
-        row.afterNoonIn || row.afterNoonOut ||
-        row.overtimeIn || row.overtimeOut
-      );
-      return hasName && hasDate && (hasTimeOrHours || hasAnyTimeBlock);
+    const filteredRows = result.rows
+      .map(normalizeParsedRow)
+      .filter((row) => {
+        const hasName = Boolean(row.employeeName && row.employeeName.trim());
+        const hasDate = Boolean(row.date);
+        const hasTimeOrHours = Boolean(row.timeIn || row.timeOut || row.totalHours || row.workHours || row.workHoursActual);
+        const hasAnyTimeBlock = Boolean(
+          row.beforeNoonIn || row.beforeNoonOut ||
+          row.afterNoonIn || row.afterNoonOut ||
+          row.overtimeIn || row.overtimeOut
+        );
+        return hasName && hasDate && (hasTimeOrHours || hasAnyTimeBlock);
+      });
+
+    const dedupMap = new Map<string, ParsedTimesheetRow>();
+    filteredRows.forEach((row) => {
+      const key = `${row.employeeName.toLowerCase()}|${row.date}`;
+      const existing = dedupMap.get(key);
+      if (!existing || countTimeFields(row) > countTimeFields(existing)) {
+        dedupMap.set(key, row);
+      }
     });
 
-    const uniqueEmployeeNames = [...new Set(filteredRows.map(row => row.employeeName).filter(Boolean))];
+    const dedupedRows = Array.from(dedupMap.values());
+
+    const dateValues = dedupedRows
+      .map((row) => row.date ? new Date(row.date) : null)
+      .filter((d): d is Date => Boolean(d) && !Number.isNaN(d!.getTime()));
+
+    const startDateFromRows = dateValues.length ? new Date(Math.min(...dateValues.map((d) => d.getTime()))) : null;
+    const endDateFromRows = dateValues.length ? new Date(Math.max(...dateValues.map((d) => d.getTime()))) : null;
+
+    if (!dedupedRows.length || !startDateFromRows || !endDateFromRows) {
+      return NextResponse.json({ ok: false, error: 'No usable timesheet rows were found.' }, { status: 400 });
+    }
+
+    const uniqueEmployeeNames = [...new Set(dedupedRows.map(row => row.employeeName).filter(Boolean))];
 
     const employeeRecords = await Promise.all(
       uniqueEmployeeNames.map(async (name) => {
@@ -89,12 +137,16 @@ export async function POST(request: Request) {
       data: {
         fileName: file.name,
         format: result.format,
-        startDate: new Date(result.startDate!),
-        endDate: new Date(result.endDate!),
-        totalRows: filteredRows.length,
+        startDate: result.startDate ? new Date(result.startDate) : startDateFromRows,
+        endDate: result.endDate ? new Date(result.endDate) : endDateFromRows,
+        totalRows: dedupedRows.length,
         rows: {
-          create: filteredRows.map((row) => {
+          create: dedupedRows.map((row) => {
             const employee = employeeMap.get(row.employeeName);
+            const isAbsent = row.attendanceStatus === 'absent';
+            const totalHours = isAbsent ? null : row.totalHours ?? row.workHours ?? row.workHoursActual ?? null;
+            const timeIn = isAbsent ? null : row.timeIn ?? row.beforeNoonIn ?? null;
+            const timeOut = isAbsent ? null : row.timeOut ?? row.beforeNoonOut ?? null;
             return {
               employeeName: row.employeeName,
               employeeId: employee?.id,
@@ -102,15 +154,15 @@ export async function POST(request: Request) {
               date: new Date(row.date!),
               weekday: row.weekday,
               dept: row.dept,
-              beforeNoonIn: row.beforeNoonIn,
-              beforeNoonOut: row.beforeNoonOut,
+              beforeNoonIn: timeIn,
+              beforeNoonOut: timeOut,
               afterNoonIn: row.afterNoonIn,
               afterNoonOut: row.afterNoonOut,
               overtimeIn: row.overtimeIn,
               overtimeOut: row.overtimeOut,
-              totalHours: row.totalHours,
-              workHours: row.workHours,
-              workHoursActual: row.workHoursActual,
+              totalHours,
+              workHours: row.workHours ?? totalHours,
+              workHoursActual: row.workHoursActual ?? totalHours,
               overtimeHours: row.overtimeHours,
               lateMinutes: row.lateMinutes,
               earlyMinutes: row.earlyMinutes,
@@ -143,10 +195,22 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ok: true,
       format: result.format,
-      rows: result.rows,
+      rows: timesheet.rows.map((row) => ({
+        employeeName: row.employeeName,
+        date: row.date.toISOString().slice(0, 10),
+        timeIn: row.beforeNoonIn ?? null,
+        timeOut: row.beforeNoonOut ?? null,
+        totalHours: row.totalHours ?? row.workHours ?? null,
+        issues: [],
+        sourceLine: 0,
+        dept: row.dept,
+        userId: row.userId,
+        employeeId: row.employeeId ?? undefined,
+        attendanceStatus: (row.attendanceStatus as AttendanceStatus) ?? 'full_day',
+      })),
       warnings: result.warnings,
-      startDate: result.startDate,
-      endDate: result.endDate,
+      startDate: result.startDate ?? startDateFromRows?.toISOString().slice(0, 10),
+      endDate: result.endDate ?? endDateFromRows?.toISOString().slice(0, 10),
       timesheetId: timesheet.id,
     });
   } catch (error) {

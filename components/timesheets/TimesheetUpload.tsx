@@ -23,7 +23,7 @@ type ManualRow = {
   id: string;
   employeeName: string;
   date: string;
-  totalHours: number;
+  totalHours: number | null;
   dept?: string | null;
   timeIn?: string | null;
   timeOut?: string | null;
@@ -31,11 +31,27 @@ type ManualRow = {
   attendanceStatus?: "full_day" | "half_day" | "absent";
 };
 
+type TimesheetPayload = {
+  ok: true;
+  format: "excel" | "pdf" | "manual";
+  rows: ParsedTimesheetRow[];
+  warnings: string[];
+  startDate?: string | null;
+  endDate?: string | null;
+  timesheetId?: string;
+};
+
+type TimesheetLoadResponse = {
+  ok: boolean;
+  rows?: ParsedTimesheetRow[];
+  timesheet?: { startDate: string; endDate: string; uploadedAt: string; id: string; format?: string } | null;
+};
+
 const createBlankManualRow = (): ManualRow => ({
   id: `manual-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
   employeeName: "",
   date: "",
-  totalHours: 0,
+  totalHours: null,
   dept: "",
   timeIn: "",
   timeOut: "",
@@ -43,10 +59,24 @@ const createBlankManualRow = (): ManualRow => ({
   attendanceStatus: "full_day",
 });
 
+type EmployeeSummary = { id: string; employeeName: string; dayCount: number };
+
+const mapParsedToManualRow = (row: ParsedTimesheetRow, index: number): ManualRow => ({
+  id: (row as any).id ?? `manual-${index}-${row.employeeName}-${row.date ?? ""}`,
+  employeeName: row.employeeName ?? "",
+  date: row.date ?? "",
+  totalHours: row.totalHours ?? row.workHours ?? null,
+  dept: row.dept ?? "",
+  timeIn: row.timeIn ?? null,
+  timeOut: row.timeOut ?? null,
+  isSoftDeleted: row.isSoftDeleted ?? false,
+  attendanceStatus: row.attendanceStatus ?? "full_day",
+});
+
 export function TimesheetUpload() {
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
-  const [result, setResult] = useState<UploadSuccess | null>(null);
+  const [result, setResult] = useState<TimesheetPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [startDate, setStartDate] = useState<string | null>(null);
@@ -68,6 +98,60 @@ export function TimesheetUpload() {
   const [bulkDeptUpload, setBulkDeptUpload] = useState("");
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [invalidFields, setInvalidFields] = useState<Record<string, string[]>>({});
+  const [loadingRows, setLoadingRows] = useState(false);
+  const [employees, setEmployees] = useState<EmployeeSummary[]>([]);
+  const [loadingEmployees, setLoadingEmployees] = useState(false);
+
+  const hydrateFromServer = (payload: TimesheetPayload) => {
+    const rows = payload.rows ?? [];
+    setResult(payload);
+    setStartDate(payload.startDate ?? null);
+    setEndDate(payload.endDate ?? null);
+    setManualRows(rows.map(mapParsedToManualRow));
+  };
+
+  const loadEmployees = async () => {
+    try {
+      setLoadingEmployees(true);
+      const res = await fetch("/api/timesheets/employee-summary");
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data.ok) return;
+      setEmployees(data.employees ?? []);
+    } catch (err) {
+      console.error("Failed to load employees", err);
+    } finally {
+      setLoadingEmployees(false);
+    }
+  };
+
+  const loadEmployeeRows = async (name: string, employeeId?: string | null) => {
+    try {
+      setLoadingRows(true);
+      const params = new URLSearchParams();
+      if (employeeId) params.set("employeeId", employeeId);
+      else params.set("employeeName", name);
+      const response = await fetch(`/api/timesheets/employee-rows?${params.toString()}`);
+      if (!response.ok) return;
+      const data = await response.json();
+      if (!data.ok) return;
+      const rows = (data.rows ?? []) as ParsedTimesheetRow[];
+      if (rows.length) {
+        setManualRows(rows.map(mapParsedToManualRow));
+      } else {
+        const seeded = Array.from({ length: 20 }, () => ({ ...createBlankManualRow(), employeeName: name }));
+        setManualRows(seeded);
+      }
+      setStartDate(data.timesheet?.startDate ?? null);
+      setEndDate(data.timesheet?.endDate ?? null);
+      setBulkDept(rows[0]?.dept ?? "");
+      setBulkName(name);
+    } catch (err) {
+      console.error("Failed to load employee rows", err);
+    } finally {
+      setLoadingRows(false);
+    }
+  };
 
   const scrollToRow = (id: string) => {
     if (typeof document === "undefined") return;
@@ -99,7 +183,6 @@ export function TimesheetUpload() {
       blank.employeeName = scoped;
       setManualRows((rows) => {
         const updated = [blank, ...rows];
-        sessionStorage.setItem("manualTimesheetRows", JSON.stringify(updated));
         return updated;
       });
       setManualMessage("Blank row added. Fill it out, then save.");
@@ -152,26 +235,7 @@ export function TimesheetUpload() {
     : result?.rows.length ?? 0;
 
   useEffect(() => {
-    const metaRaw = sessionStorage.getItem("timesheetMeta");
-    if (metaRaw) {
-      try {
-        const meta = JSON.parse(metaRaw);
-        if (meta.startDate) setStartDate(meta.startDate);
-        if (meta.endDate) setEndDate(meta.endDate);
-      } catch {
-        // ignore
-      }
-    }
-
-    const manualRaw = sessionStorage.getItem("manualTimesheetRows");
-    if (manualRaw) {
-      try {
-        const parsed = JSON.parse(manualRaw) as ManualRow[];
-        setManualRows(parsed);
-      } catch {
-        setManualRows([]);
-      }
-    }
+    loadEmployees();
   }, []);
 
   useEffect(() => {
@@ -208,9 +272,9 @@ export function TimesheetUpload() {
     }
   }, [effectiveEmployee, manualRows]);
 
-  const handleGeneratePayroll = () => {
+  const handleGeneratePayroll = async () => {
     if (entryMode === "manual") {
-      const ok = persistManualRows(manualRows);
+      const ok = await persistManualRows(manualRows);
       if (!ok) return;
       router.push("/admin/payroll");
       return;
@@ -220,69 +284,56 @@ export function TimesheetUpload() {
       setError("Upload and parse a timesheet first.");
       return;
     }
-    persistUploadRows(result.rows);
     router.push("/admin/payroll");
   };
 
-  const persistManualRows = (rows: ManualRow[]) => {
+  const persistManualRows = async (rows: ManualRow[]) => {
     const activeRows = rows.filter((row) => !row.isSoftDeleted);
     if (!activeRows.length) {
       setError("Add at least one manual row before saving.");
       return false;
     }
 
-    const parsedRows: ParsedTimesheetRow[] = activeRows.map((row, idx) => ({
-      employeeName: row.employeeName,
-      date: row.date,
-      timeIn: row.timeIn ?? null,
-      timeOut: row.timeOut ?? null,
-      totalHours: row.totalHours,
-      issues: [],
-      sourceLine: idx + 1,
-      dept: row.dept ?? null,
-      userId: row.employeeName,
-      workHours: row.totalHours,
-      overtimeHours: 0,
-      addPayNormal: 0,
-      addPayOvertime: 0,
-      addPayAllowance: 0,
-      payrollDeduction: 0,
-      attendanceStatus: row.attendanceStatus ?? "full_day",
-    }));
-
-    const dates = activeRows.map((row) => new Date(row.date)).filter((d) => !Number.isNaN(d.getTime()));
-    const minDate = dates.length ? new Date(Math.min(...dates.map((d) => d.getTime()))).toISOString().slice(0, 10) : null;
-    const maxDate = dates.length ? new Date(Math.max(...dates.map((d) => d.getTime()))).toISOString().slice(0, 10) : null;
-    const metaId = `manual-${Date.now()}`;
-
-    sessionStorage.setItem("timesheetData", JSON.stringify(parsedRows));
-    sessionStorage.setItem(
-      "timesheetMeta",
-      JSON.stringify({
-        format: "manual",
-        totalRows: parsedRows.length,
-        uploadedAt: new Date().toISOString(),
-        startDate: minDate,
-        endDate: maxDate,
-        timesheetId: metaId,
-      })
-    );
-    sessionStorage.setItem("manualTimesheetRows", JSON.stringify(rows));
-
-    setResult({
-      ok: true,
-      format: "manual",
-      rows: parsedRows,
-      warnings: [],
-      startDate: minDate,
-      endDate: maxDate,
-      timesheetId: metaId,
+    const payloadRows = activeRows.map((row) => {
+      const status = row.attendanceStatus ?? "full_day";
+      return {
+        employeeName: row.employeeName,
+        dept: row.dept ?? "",
+        date: row.date,
+        timeIn: status === "absent" ? null : row.timeIn ?? null,
+        timeOut: status === "absent" ? null : row.timeOut ?? null,
+        totalHours: status === "absent" ? null : row.totalHours,
+        attendanceStatus: status,
+      };
     });
-    setStartDate(minDate);
-    setEndDate(maxDate);
-    setManualMessage("Manual timesheet saved. Ready to generate payroll.");
-    setError(null);
-    return true;
+
+    try {
+      setLoadingRows(true);
+      const response = await fetch("/api/timesheets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rows: payloadRows }),
+      });
+
+      const data = (await response.json()) as TimesheetPayload | UploadError;
+
+      if (!response.ok || !data || ("ok" in data && data.ok === false)) {
+        const message = "error" in data ? data.error : "Failed to save manual timesheet";
+        setError(message);
+        return false;
+      }
+
+      hydrateFromServer(data as TimesheetPayload);
+      loadEmployees();
+      setManualMessage("Manual timesheet saved. Ready to generate payroll.");
+      setError(null);
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save manual timesheet");
+      return false;
+    } finally {
+      setLoadingRows(false);
+    }
   };
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -301,42 +352,22 @@ export function TimesheetUpload() {
       body.append("file", file);
 
       const response = await fetch("/api/timesheets/upload", { method: "POST", body });
-      const data = (await response.json()) as UploadSuccess | UploadError;
+      const data = (await response.json()) as TimesheetPayload | UploadError;
 
-      if (!response.ok || !data.ok) {
+      if (!response.ok || !data || ("ok" in data && data.ok === false)) {
         const message = "error" in data ? data.error : "Failed to parse file";
         setError(message);
         return;
       }
 
-      const dedup = new Set<string>();
-      const mappedRows = data.rows
-        .map((row) => ({ ...row } satisfies ParsedTimesheetRow))
-        .filter((row) => {
-          const k = [row.employeeName ?? "", row.date ?? "", row.timeIn ?? "", row.timeOut ?? "", row.totalHours ?? ""].join("|#|");
-          if (dedup.has(k)) return false;
-          dedup.add(k);
-          return true;
-        });
+      const rows = (data as TimesheetPayload).rows.map((row) => ({
+        ...row,
+        attendanceStatus: row.attendanceStatus ?? "full_day",
+      }));
 
-      setResult({ ...data, rows: mappedRows });
+      hydrateFromServer({ ...(data as TimesheetPayload), rows });
+      loadEmployees();
       setEntryMode("upload");
-      setStartDate(data.startDate ?? null);
-      setEndDate(data.endDate ?? null);
-      sessionStorage.setItem("timesheetData", JSON.stringify(mappedRows));
-      sessionStorage.setItem(
-        "timesheetMeta",
-        JSON.stringify({
-          format: data.format,
-          totalRows: mappedRows.length,
-          uploadedAt: new Date().toISOString(),
-          startDate: data.startDate,
-          endDate: data.endDate,
-          timesheetId: data.timesheetId,
-        })
-      );
-
-      // Notify dashboard to refresh
       window.dispatchEvent(new CustomEvent("timesheet-updated"));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unexpected error");
@@ -377,9 +408,7 @@ export function TimesheetUpload() {
 
     setManualRows((rows) => {
       const exists = rows.some((row) => row.id === next.id);
-      const updated = exists ? rows.map((row) => (row.id === next.id ? { ...row, ...next } : row)) : [...rows, next];
-      sessionStorage.setItem("manualTimesheetRows", JSON.stringify(updated));
-      return updated;
+      return exists ? rows.map((row) => (row.id === next.id ? { ...row, ...next } : row)) : [...rows, next];
     });
     setError(null);
     setManualMessage(manualEditingId ? "Manual row updated." : "Manual row added.");
@@ -399,26 +428,21 @@ export function TimesheetUpload() {
 
   const handleManualDelete = (id: string) => {
     setManualRows((rows) => {
-      const updated = rows.filter((row) => row.id !== id);
-      sessionStorage.setItem("manualTimesheetRows", JSON.stringify(updated));
-      return updated;
+      return rows.filter((row) => row.id !== id);
     });
   };
 
   const handleManualSoftDelete = (id: string) => {
     setManualRows((rows) => {
-      const updated = rows.map((row) => (row.id === id ? { ...row, isSoftDeleted: !row.isSoftDeleted } : row));
-      sessionStorage.setItem("manualTimesheetRows", JSON.stringify(updated));
-      return updated;
+      return rows.map((row) => (row.id === id ? { ...row, isSoftDeleted: !row.isSoftDeleted } : row));
     });
   };
 
-  const handleManualSave = () => {
+  const handleManualSave = async () => {
     setPreviewError(null);
     setInvalidFields({});
     const withBulk = applyBulkToManualRows(manualRows);
     setManualRows(withBulk);
-    sessionStorage.setItem("manualTimesheetRows", JSON.stringify(withBulk));
     if (!effectiveEmployee) {
       setPreviewError("Choose an employee before saving their rows.");
       return;
@@ -438,36 +462,37 @@ export function TimesheetUpload() {
       duplicateKeys.set(key, (duplicateKeys.get(key) ?? 0) + 1);
     });
 
-    const invalid = active.filter(
-      (row) =>
-        !row.employeeName.trim() ||
-        !row.date ||
-        row.totalHours === null ||
-        row.totalHours === undefined ||
-        !row.timeIn ||
-        !row.timeOut ||
-        !row.dept
-    );
+    const invalid = active.filter((row) => {
+      const status = row.attendanceStatus ?? "full_day";
+      const requiresTime = status !== "absent";
+      const missingBase = !row.employeeName.trim() || !row.date || !row.dept;
+      const missingTime = requiresTime && (!row.timeIn || !row.timeOut || row.totalHours === null || row.totalHours === undefined);
+      return missingBase || missingTime;
+    });
+
     if (invalid.length) {
       setPreviewError("Add employee, date, time in/out, hours, and department for every row before saving.");
       const invalidMap: Record<string, string[]> = {};
       invalid.forEach((row) => {
+        const status = row.attendanceStatus ?? "full_day";
+        const requiresTime = status !== "absent";
         invalidMap[row.id] = [
           ...(row.employeeName.trim() ? [] : ["employeeName"]),
           ...(row.date ? [] : ["date"]),
-          ...(row.timeIn ? [] : ["timeIn"]),
-          ...(row.timeOut ? [] : ["timeOut"]),
-          ...(row.totalHours === null || row.totalHours === undefined ? ["totalHours"] : []),
           ...(row.dept ? [] : ["dept"]),
+          ...(requiresTime && !row.timeIn ? ["timeIn"] : []),
+          ...(requiresTime && !row.timeOut ? ["timeOut"] : []),
+          ...(requiresTime && (row.totalHours === null || row.totalHours === undefined) ? ["totalHours"] : []),
         ];
       });
       setInvalidFields(invalidMap);
-      const firstIdx = withBulk.findIndex(
-        (row) =>
-          !row.isSoftDeleted &&
-          row.employeeName.toLowerCase() === effectiveEmployee.toLowerCase() &&
-          (!row.employeeName.trim() || !row.date || row.totalHours === null || row.totalHours === undefined || !row.timeIn || !row.timeOut || !row.dept)
-      );
+      const firstIdx = withBulk.findIndex((row) => {
+        const status = row.attendanceStatus ?? "full_day";
+        const requiresTime = status !== "absent";
+        const missingBase = !row.employeeName.trim() || !row.date || !row.dept;
+        const missingTime = requiresTime && (row.totalHours === null || row.totalHours === undefined || !row.timeIn || !row.timeOut);
+        return !row.isSoftDeleted && row.employeeName.toLowerCase() === effectiveEmployee.toLowerCase() && (missingBase || missingTime);
+      });
       if (firstIdx >= 0) {
         const id = `preview-row-${withBulk[firstIdx].id ?? firstIdx}`;
         scrollToRow(id);
@@ -494,71 +519,26 @@ export function TimesheetUpload() {
     }
 
     setInvalidFields({});
-    persistManualRows(withBulk);
+    await persistManualRows(withBulk);
   };
 
   const persistUploadRows = (rows: ParsedTimesheetRow[]) => {
     const active = rows.filter((row) => !row.isSoftDeleted);
-    sessionStorage.setItem("timesheetData", JSON.stringify(active));
-    sessionStorage.setItem(
-      "timesheetMeta",
-      JSON.stringify({
-        format: "excel",
-        totalRows: active.length,
-        uploadedAt: new Date().toISOString(),
-        startDate: startDate || null,
-        endDate: endDate || null,
-      })
-    );
-    setResult((prev) => (prev ? { ...prev, rows } : prev));
+    setResult((prev) => (prev ? { ...prev, rows: active } : prev));
   };
 
   const employeeList = useMemo(() => {
     const set = new Set<string>();
-
-    manualRows.forEach((row) => {
-      if (row.employeeName) set.add(row.employeeName);
-    });
-
-    (result?.rows ?? []).forEach((row) => {
-      if (row.employeeName) set.add(row.employeeName);
-    });
-
+    employees.forEach((emp) => set.add(emp.employeeName));
+    if (currentEmployee) set.add(currentEmployee);
     return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [manualRows, result?.rows]);
+  }, [employees, currentEmployee]);
 
-  const mergeUploadRowsForEmployee = (name: string) => {
-    if (!result?.rows?.length) return;
-    const scoped = name.toLowerCase();
-    const uploadMatches = result.rows.filter((row) => (row.employeeName || "").toLowerCase() === scoped);
-    if (!uploadMatches.length) return;
-
-    setManualRows((rows) => {
-      const existingKeys = new Set(
-        rows
-          .filter((r) => r.employeeName.toLowerCase() === scoped)
-          .map((r) => [r.date || "", r.timeIn || "", r.timeOut || "", r.totalHours ?? 0].join("|#|"))
-      );
-
-      const additions = uploadMatches
-        .map((row) => ({
-          id: `manual-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          employeeName: row.employeeName || name,
-          date: row.date || "",
-          totalHours: row.totalHours ?? 0,
-          dept: row.dept ?? "",
-          timeIn: row.timeIn ?? "",
-          timeOut: row.timeOut ?? "",
-          isSoftDeleted: row.isSoftDeleted ?? false,
-        } satisfies ManualRow))
-        .filter((r) => !existingKeys.has([r.date || "", r.timeIn || "", r.timeOut || "", r.totalHours ?? 0].join("|#|")));
-
-      if (!additions.length) return rows;
-      const updated = [...rows, ...additions];
-      sessionStorage.setItem("manualTimesheetRows", JSON.stringify(updated));
-      return updated;
-    });
-  };
+  const employeeDayCount = useMemo(() => {
+    const map = new Map<string, number>();
+    employees.forEach((emp) => map.set(emp.employeeName, emp.dayCount));
+    return map;
+  }, [employees]);
 
   const ensureEmployeeRows = (name: string) => {
     const trimmed = name.trim();
@@ -571,16 +551,13 @@ export function TimesheetUpload() {
     setManualEmployee(trimmed);
     setBulkName(trimmed);
     setEntryMode("manual");
-    mergeUploadRowsForEmployee(trimmed);
-    const hasRows = manualRows.some((row) => row.employeeName.toLowerCase() === trimmed.toLowerCase());
-    if (hasRows) return;
-    const seeded = Array.from({ length: 7 }, () => ({ ...createBlankManualRow(), employeeName: trimmed }));
-    setManualRows((rows) => {
-      const updated = [...rows, ...seeded];
-      sessionStorage.setItem("manualTimesheetRows", JSON.stringify(updated));
-      return updated;
-    });
-    setManualMessage(`Created starter rows for ${trimmed}.`);
+    setManualRows([]);
+    const found = employees.find((emp) => emp.employeeName.toLowerCase() === trimmed.toLowerCase());
+    loadEmployeeRows(trimmed, found?.id);
+    if (!found) {
+      setEmployees((prev) => [...prev, { id: "", employeeName: trimmed, dayCount: 0 }]);
+    }
+    setManualMessage(`Editing timesheet for ${trimmed}.`);
   };
 
   return (
@@ -628,7 +605,7 @@ export function TimesheetUpload() {
           <div className="space-y-1">
             <p className="text-xs uppercase tracking-[0.26em] text-[var(--muted)]">Employees</p>
             <h2 className="text-xl font-semibold text-[var(--foreground)]">Employees from upload or manual entry</h2>
-            <p className="text-sm text-[var(--muted)]">Handle up to ~30 employees. Click a row to open their timesheet; “Add employee” drops in 7 starter rows when none exist.</p>
+            <p className="text-sm text-[var(--muted)]">Handle up to ~30 employees. Click a row to open their timesheet; “Add employee” drops in starter rows when none exist.</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             {entryMode === "manual" ? (
@@ -636,12 +613,9 @@ export function TimesheetUpload() {
                 type="button"
                 onClick={() => {
                   const label = `New Employee ${newEmployeeCounter}`;
-                  const seeded = Array.from({ length: 7 }, () => ({ ...createBlankManualRow(), employeeName: label }));
-                  setManualRows((rows) => {
-                    const updated = [...rows, ...seeded];
-                    sessionStorage.setItem("manualTimesheetRows", JSON.stringify(updated));
-                    return updated;
-                  });
+                  const seeded = Array.from({ length: 20 }, () => ({ ...createBlankManualRow(), employeeName: label }));
+                  setManualRows(seeded);
+                  setEmployees((prev) => [...prev, { id: "", employeeName: label, dayCount: 0 }]);
                   setCurrentEmployee(label);
                   setManualEmployee(label);
                   setBulkName(label);
@@ -671,18 +645,18 @@ export function TimesheetUpload() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--border)]/70 text-[var(--foreground)]">
-                  {employeeList.length === 0 ? (
+                  {loadingEmployees ? (
+                    <tr>
+                      <td colSpan={entryMode === "manual" ? 3 : 2} className="px-4 py-4 text-center text-[var(--muted)]">Loading employees…</td>
+                    </tr>
+                  ) : null}
+                  {employeeList.length === 0 && !loadingEmployees ? (
                     <tr>
                       <td colSpan={entryMode === "manual" ? 3 : 2} className="px-4 py-4 text-center text-[var(--muted)]">No employees yet. Add one to start a timesheet.</td>
                     </tr>
                   ) : (
                     employeeList.map((name) => {
-                      const manualMatches = manualRows.filter((r) => r.employeeName === name);
-                      const uploadMatches = (result?.rows ?? []).filter((r) => r.employeeName === name);
-                      const daySet = new Set<string>();
-                      manualMatches.forEach((r) => { if (r.date) daySet.add(r.date); });
-                      uploadMatches.forEach((r) => { if (r.date) daySet.add(r.date); });
-                      const dayCount = daySet.size;
+                      const dayCount = employeeDayCount.get(name) ?? 0;
                       const isActive = effectiveEmployee && effectiveEmployee === name;
                       return (
                          <tr key={name} className={`hover:bg-[var(--surface)]/60 ${isActive ? "bg-[var(--accent)]/5" : ""}`}>
@@ -773,14 +747,11 @@ export function TimesheetUpload() {
               <div className="flex flex-wrap items-center gap-3">
                 <button
                   type="button"
-                  onClick={() => {
+                    onClick={() => {
                     const label = `New Employee ${newEmployeeCounter}`;
-                    const seeded = Array.from({ length: 7 }, () => ({ ...createBlankManualRow(), employeeName: label }));
-                    setManualRows((rows) => {
-                      const updated = [...rows, ...seeded];
-                      sessionStorage.setItem("manualTimesheetRows", JSON.stringify(updated));
-                      return updated;
-                    });
+                    const seeded = Array.from({ length: 20 }, () => ({ ...createBlankManualRow(), employeeName: label }));
+                    setManualRows(seeded);
+                    setEmployees((prev) => [...prev, { id: "", employeeName: label, dayCount: 0 }]);
                     setCurrentEmployee(label);
                     setManualEmployee(label);
                     setBulkName(label);
@@ -853,13 +824,14 @@ export function TimesheetUpload() {
 
       {(entryMode === "upload" ? result : true) ? (
         <section className="rounded-3xl border border-[var(--border)] bg-[var(--panel)]/90 p-6 shadow-[0_24px_70px_rgba(16,40,94,0.1)]">
-          <div className="space-y-3">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-xs uppercase tracking-[0.26em] text-[var(--muted)]">Preview</p>
-                <h3 className="text-xl font-semibold text-[var(--foreground)]">Showing the first {Math.min(PREVIEW_LIMIT, totalRows)} rows</h3>
-                <p className="text-sm text-[var(--muted)]">Review, edit, or delete rows before payroll runs.</p>
-              </div>
+              <div className="space-y-3">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.26em] text-[var(--muted)]">Preview</p>
+                    <h3 className="text-xl font-semibold text-[var(--foreground)]">Showing the first {Math.min(PREVIEW_LIMIT, totalRows)} rows</h3>
+                    <p className="text-sm text-[var(--muted)]">Review, edit, or delete rows before payroll runs.</p>
+                    {loadingRows ? <p className="text-xs font-semibold text-[var(--accent)]">Loading timesheet rows…</p> : null}
+                  </div>
               <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-[var(--muted)]">
                 <span className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-white px-3 py-1">Total rows: {totalRows}</span>
                 <span className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-white px-3 py-1">Source: {entryMode === "upload" ? (result?.format?.toUpperCase() ?? "UPLOAD") : "MANUAL"}</span>
@@ -893,15 +865,13 @@ export function TimesheetUpload() {
                     onChange={(e) => setBulkName(e.target.value)}
                     onBlur={() => {
                       if (!bulkName.trim()) return;
-                      setManualRows((rows) => {
-                        const updated = rows.map((r) =>
+                      setManualRows((rows) =>
+                        rows.map((r) =>
                           r.employeeName.toLowerCase() === effectiveEmployee.toLowerCase()
                             ? { ...r, employeeName: bulkName.trim() }
                             : r
-                        );
-                        sessionStorage.setItem("manualTimesheetRows", JSON.stringify(updated));
-                        return updated;
-                      });
+                        )
+                      );
                       setCurrentEmployee(bulkName.trim());
                       setManualEmployee(bulkName.trim());
                     }}
@@ -915,15 +885,13 @@ export function TimesheetUpload() {
                     value={bulkDept}
                     onChange={(e) => setBulkDept(e.target.value)}
                     onBlur={() => {
-                      setManualRows((rows) => {
-                        const updated = rows.map((r) =>
+                      setManualRows((rows) =>
+                        rows.map((r) =>
                           r.employeeName.toLowerCase() === effectiveEmployee.toLowerCase()
                             ? { ...r, dept: bulkDept }
                             : r
-                        );
-                        sessionStorage.setItem("manualTimesheetRows", JSON.stringify(updated));
-                        return updated;
-                      });
+                        )
+                      );
                     }}
                     placeholder="Department"
                     className="w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
@@ -943,7 +911,6 @@ export function TimesheetUpload() {
                       if (!result || !bulkNameUpload.trim()) return;
                       const nextRows = result.rows.map((r) => ({ ...r, employeeName: bulkNameUpload.trim() }));
                       setResult({ ...result, rows: nextRows });
-                      sessionStorage.setItem("timesheetData", JSON.stringify(nextRows));
                     }}
                     placeholder="Employee name"
                     className="w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
@@ -958,7 +925,6 @@ export function TimesheetUpload() {
                       if (!result) return;
                       const nextRows = result.rows.map((r) => ({ ...r, dept: bulkDeptUpload }));
                       setResult({ ...result, rows: nextRows });
-                      sessionStorage.setItem("timesheetData", JSON.stringify(nextRows));
                     }}
                     placeholder="Department"
                     className="w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
@@ -993,10 +959,11 @@ export function TimesheetUpload() {
                        <td colSpan={9} className="px-4 py-6 text-center text-[var(--muted)]">No rows yet. Click “+ Add row” or upload a timesheet to get started.</td>
                      </tr>
                    ) : (
-                    previewRows.map((row, idx) => {
+                       previewRows.map((row, idx) => {
                       const isManual = (row as ManualRow).id !== undefined;
                       const baseKey = isManual ? (row as ManualRow).id : `upload-${idx}`;
                       const attendanceStatus = (row as ParsedTimesheetRow).attendanceStatus ?? (row as ManualRow).attendanceStatus ?? "full_day";
+                      const isAbsent = attendanceStatus === "absent";
                       const isEdited = row.isSoftDeleted; // Use for status display
 
                       const getStatusColor = (status: string) => {
@@ -1026,23 +993,24 @@ export function TimesheetUpload() {
                       };
                       const name = (row as ParsedTimesheetRow).employeeName ?? (row as ManualRow).employeeName;
                       const date = (row as ParsedTimesheetRow).date ?? (row as ManualRow).date;
-                      const hours = (row as ParsedTimesheetRow).totalHours ?? (row as ManualRow).totalHours;
+                      const rawHours = (row as ParsedTimesheetRow).totalHours ?? (row as ManualRow).totalHours;
                       const dept = (row as ParsedTimesheetRow).dept ?? (row as ManualRow).dept ?? "";
-                      const timeIn = (row as ParsedTimesheetRow).timeIn ?? (row as ManualRow).timeIn ?? "";
-                      const timeOut = (row as ParsedTimesheetRow).timeOut ?? (row as ManualRow).timeOut ?? "";
+                      const timeIn = isAbsent ? "" : (row as ParsedTimesheetRow).timeIn ?? (row as ManualRow).timeIn ?? "";
+                      const timeOut = isAbsent ? "" : (row as ParsedTimesheetRow).timeOut ?? (row as ManualRow).timeOut ?? "";
+                      const displayHours = isAbsent ? "" : rawHours ?? "";
 
                       const updateRow = (field: "employeeName" | "date" | "totalHours" | "dept" | "timeIn" | "timeOut", value: string) => {
+                        if (isAbsent && (field === "timeIn" || field === "timeOut" || field === "totalHours")) return;
                         if (entryMode === "manual") {
                           setManualRows((rows) => {
                             const updated = rows.map((r) =>
                               (r as ManualRow).id === baseKey
                                 ? {
                                     ...r,
-                                    [field]: field === "totalHours" ? Number(value) || 0 : value,
+                                    [field]: field === "totalHours" ? (value === "" ? null : Number(value) || 0) : value,
                                   }
                                 : r
                             );
-                            sessionStorage.setItem("manualTimesheetRows", JSON.stringify(updated));
                             return updated;
                           });
                         } else {
@@ -1131,6 +1099,7 @@ export function TimesheetUpload() {
                               onChange={(e) => updateRow("timeIn", e.target.value)}
                               placeholder="09:00"
                               className={`w-full rounded-lg border px-3 py-2 text-sm shadow-[0_1px_0_rgba(16,40,94,0.04)] ${invalidFields[baseKey]?.includes("timeIn") ? "border-red-400 bg-red-50" : "border-[var(--border)] bg-white"}`}
+                              disabled={isAbsent}
                             />
                           </td>
                           <td className="px-4 py-3">
@@ -1140,15 +1109,17 @@ export function TimesheetUpload() {
                               onChange={(e) => updateRow("timeOut", e.target.value)}
                               placeholder="18:00"
                               className={`w-full rounded-lg border px-3 py-2 text-sm shadow-[0_1px_0_rgba(16,40,94,0.04)] ${invalidFields[baseKey]?.includes("timeOut") ? "border-red-400 bg-red-50" : "border-[var(--border)] bg-white"}`}
+                              disabled={isAbsent}
                             />
                           </td>
                           <td className="px-4 py-3">
                             <input
                               type="number"
-                              value={hours ?? ""}
+                              value={displayHours}
                               onChange={(e) => updateRow("totalHours", e.target.value)}
                               step="0.01"
                               className={`w-full rounded-lg border px-3 py-2 text-sm shadow-[0_1px_0_rgba(16,40,94,0.04)] ${invalidFields[baseKey]?.includes("totalHours") ? "border-red-400 bg-red-50" : "border-[var(--border)] bg-white"}`}
+                              disabled={isAbsent}
                             />
                           </td>
                           <td className="px-4 py-3">
@@ -1172,17 +1143,30 @@ export function TimesheetUpload() {
                                     setManualRows((rows) => {
                                       const updated = rows.map((r) =>
                                         (r as ManualRow).id === baseKey
-                                          ? { ...r, attendanceStatus: newStatus as "full_day" | "half_day" | "absent", isSoftDeleted: false }
+                                          ? {
+                                              ...r,
+                                              attendanceStatus: newStatus as "full_day" | "half_day" | "absent",
+                                              isSoftDeleted: false,
+                                              timeIn: newStatus === "absent" ? null : r.timeIn,
+                                              timeOut: newStatus === "absent" ? null : r.timeOut,
+                                              totalHours: newStatus === "absent" ? null : r.totalHours,
+                                            }
                                           : r
                                       );
-                                      sessionStorage.setItem("manualTimesheetRows", JSON.stringify(updated));
                                       return updated;
                                     });
                                   } else {
                                     setResult((prev) => {
                                       if (!prev) return prev;
                                       const nextRows = [...prev.rows];
-                                      nextRows[idx] = { ...nextRows[idx], attendanceStatus: newStatus as "full_day" | "half_day" | "absent", isSoftDeleted: false };
+                                      nextRows[idx] = {
+                                        ...nextRows[idx],
+                                        attendanceStatus: newStatus as "full_day" | "half_day" | "absent",
+                                        isSoftDeleted: false,
+                                        timeIn: newStatus === "absent" ? null : nextRows[idx].timeIn,
+                                        timeOut: newStatus === "absent" ? null : nextRows[idx].timeOut,
+                                        totalHours: newStatus === "absent" ? null : nextRows[idx].totalHours,
+                                      };
                                       persistUploadRows(nextRows);
                                       return { ...prev, rows: nextRows };
                                     });
@@ -1236,16 +1220,13 @@ export function TimesheetUpload() {
                         setPreviewError(null);
                         setInvalidFields({});
                         const activeRows = result.rows.filter((row) => !row.isSoftDeleted);
-                        const invalid = activeRows.filter(
-                          (row) =>
-                            !row.employeeName?.trim() ||
-                            !row.date ||
-                            row.totalHours === null ||
-                            row.totalHours === undefined ||
-                            !row.timeIn ||
-                            !row.timeOut ||
-                            !row.dept
-                        );
+                        const invalid = activeRows.filter((row) => {
+                          const status = row.attendanceStatus ?? "full_day";
+                          const requiresTime = status !== "absent";
+                          const missingBase = !row.employeeName?.trim() || !row.date || !row.dept;
+                          const missingTime = requiresTime && (!row.timeIn || !row.timeOut || row.totalHours === null || row.totalHours === undefined);
+                          return missingBase || missingTime;
+                        });
                         if (invalid.length) {
                           setPreviewError("Add employee, date, time in/out, hours, and department for every row before saving.");
                           const invalidMap: Record<string, string[]> = {};
@@ -1255,10 +1236,10 @@ export function TimesheetUpload() {
                             invalidMap[key] = [
                               ...(row.employeeName?.trim() ? [] : ["employeeName"]),
                               ...(row.date ? [] : ["date"]),
-                              ...(row.timeIn ? [] : ["timeIn"]),
-                              ...(row.timeOut ? [] : ["timeOut"]),
-                              ...(row.totalHours === null || row.totalHours === undefined ? ["totalHours"] : []),
                               ...(row.dept ? [] : ["dept"]),
+                              ...((row.attendanceStatus ?? "full_day") !== "absent" && !row.timeIn ? ["timeIn"] : []),
+                              ...((row.attendanceStatus ?? "full_day") !== "absent" && !row.timeOut ? ["timeOut"] : []),
+                              ...((row.attendanceStatus ?? "full_day") !== "absent" && (row.totalHours === null || row.totalHours === undefined) ? ["totalHours"] : []),
                             ];
                           });
                           setInvalidFields(invalidMap);
@@ -1266,11 +1247,8 @@ export function TimesheetUpload() {
                             (row) =>
                               !row.employeeName?.trim() ||
                               !row.date ||
-                              row.totalHours === null ||
-                              row.totalHours === undefined ||
-                              !row.timeIn ||
-                              !row.timeOut ||
-                              !row.dept
+                              !row.dept ||
+                              ((row.attendanceStatus ?? "full_day") !== "absent" && (row.totalHours === null || row.totalHours === undefined || !row.timeIn || !row.timeOut))
                           );
                           if (idx >= 0) {
                             scrollToRow(`preview-row-upload-${idx}`);
