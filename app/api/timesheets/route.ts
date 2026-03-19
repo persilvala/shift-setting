@@ -142,17 +142,20 @@ export async function POST(request: Request) {
 
     const employeeNames = [...new Set(dedupedRows.map((r) => r.employeeName))];
 
-    // Check existing dept and duplicate dates in DB
+    // Validate against existing data: department consistency and duplicate employee/date in DB
     const existingRows = await prisma.timesheetRow.findMany({
-      where: { employeeName: { in: employeeNames } },
+      where: {
+        employeeName: { in: employeeNames },
+        date: { in: dedupedRows.map((r) => new Date(r.date)) },
+      },
       select: { employeeName: true, dept: true, date: true },
     });
 
     const existingDeptMap = new Map<string, string>();
     const existingDateMap = new Map<string, Set<string>>();
     existingRows.forEach((row) => {
-      if (row.dept) {
-        if (!existingDeptMap.has(row.employeeName)) existingDeptMap.set(row.employeeName, row.dept);
+      if (row.dept && !existingDeptMap.has(row.employeeName)) {
+        existingDeptMap.set(row.employeeName, row.dept);
       }
       const set = existingDateMap.get(row.employeeName) ?? new Set<string>();
       set.add(row.date.toISOString().slice(0, 10));
@@ -164,12 +167,12 @@ export async function POST(request: Request) {
       if (existingDept && row.dept && row.dept.trim().toLowerCase() !== existingDept.trim().toLowerCase()) {
         errors.push(`Department mismatch for ${row.employeeName}. Existing: ${existingDept}`);
       }
-      const dateset = existingDateMap.get(row.employeeName);
-      if (dateset && dateset.has(row.date)) {
-        errors.push(`Duplicate date ${row.date} already exists for ${row.employeeName}.`);
-      }
       if (existingDept && (!row.dept || !row.dept.trim())) {
         row.dept = existingDept;
+      }
+      const set = existingDateMap.get(row.employeeName);
+      if (set && set.has(row.date)) {
+        errors.push(`Duplicate date ${row.date} already exists for ${row.employeeName}.`);
       }
     });
 

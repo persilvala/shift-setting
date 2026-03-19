@@ -36,46 +36,40 @@ export async function GET(request: Request) {
       return NextResponse.json({ ok: false, error: "Employee not found" }, { status: 404 });
     }
 
-    const firstRow = await prisma.timesheetRow.findFirst({
+    // Fetch latest timesheet for this employee (by uploadedAt desc) and all rows for that employee within it
+    const latestTimesheet = await prisma.timesheet.findFirst({
       where: {
-        OR: [{ employeeId: employee.id }, { employeeName: employee.employeeName }],
+        rows: {
+          some: {
+            OR: [{ employeeId: employee.id }, { employeeName: employee.employeeName }],
+          },
+        },
       },
-      orderBy: [
-        { timesheet: { uploadedAt: "desc" } },
-        { date: "asc" },
-      ],
-      include: { timesheet: true },
+      orderBy: { uploadedAt: "desc" },
     });
 
-    if (!firstRow) {
+    if (!latestTimesheet) {
       return NextResponse.json({ ok: true, employee, rows: [], timesheet: null });
     }
 
-    const targetTimesheetId = firstRow.timesheetId;
-
     const rows = await prisma.timesheetRow.findMany({
       where: {
-        timesheetId: targetTimesheetId,
+        timesheetId: latestTimesheet.id,
         OR: [{ employeeId: employee.id }, { employeeName: employee.employeeName }],
       },
       orderBy: [{ date: "asc" }],
-      include: { timesheet: true },
     });
-
-    const timesheet = rows[0]?.timesheet ?? firstRow.timesheet;
 
     return NextResponse.json({
       ok: true,
       employee,
       rows: rows.map(mapRow),
-      timesheet: timesheet
-        ? {
-            id: timesheet.id,
-            startDate: timesheet.startDate.toISOString().slice(0, 10),
-            endDate: timesheet.endDate.toISOString().slice(0, 10),
-            uploadedAt: timesheet.uploadedAt.toISOString(),
-          }
-        : null,
+      timesheet: {
+        id: latestTimesheet.id,
+        startDate: latestTimesheet.startDate.toISOString().slice(0, 10),
+        endDate: latestTimesheet.endDate.toISOString().slice(0, 10),
+        uploadedAt: latestTimesheet.uploadedAt.toISOString(),
+      },
     });
   } catch (error) {
     console.error("Failed to load employee timesheet rows:", error);
