@@ -3,6 +3,7 @@
 export type AttendanceStatus = "absent" | "full_day" | "half_day";
 
 export type ParsedTimesheetRow = {
+  id?: string;
   employeeName: string;
   date: string | null;
   timeIn: string | null;
