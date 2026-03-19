@@ -366,6 +366,15 @@ export function TimesheetUpload() {
       }));
 
       hydrateFromServer({ ...(data as TimesheetPayload), rows });
+      const dupCheck = flagUploadDuplicates(rows);
+      if (dupCheck.hasDuplicates) {
+        setPreviewError("Each employee can only have one row per date. Fix duplicates before saving.");
+        if (dupCheck.invalidMap) setInvalidFields(dupCheck.invalidMap);
+        if (dupCheck.firstIndex !== undefined) scrollToRow(`preview-row-upload-${dupCheck.firstIndex}`);
+      } else {
+        setInvalidFields({});
+        setPreviewError(null);
+      }
       loadEmployees();
       setEntryMode("upload");
       window.dispatchEvent(new CustomEvent("timesheet-updated"));
@@ -527,6 +536,32 @@ export function TimesheetUpload() {
     setResult((prev) => (prev ? { ...prev, rows: active } : prev));
   };
 
+  const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
+    const activeRows = rows.filter((row) => !row.isSoftDeleted);
+    const duplicateKeyCounts = new Map<string, number>();
+    activeRows.forEach((row) => {
+      if (!row.employeeName?.trim() || !row.date) return;
+      const key = `${row.employeeName.trim().toLowerCase()}|${row.date}`;
+      duplicateKeyCounts.set(key, (duplicateKeyCounts.get(key) ?? 0) + 1);
+    });
+
+    const duplicateIndices: number[] = [];
+    rows.forEach((row, i) => {
+      if (row.isSoftDeleted || !row.employeeName?.trim() || !row.date) return;
+      const key = `${row.employeeName.trim().toLowerCase()}|${row.date}`;
+      if ((duplicateKeyCounts.get(key) ?? 0) > 1) duplicateIndices.push(i);
+    });
+
+    if (!duplicateIndices.length) return { hasDuplicates: false } as const;
+
+    const invalidMap: Record<string, string[]> = {};
+    duplicateIndices.forEach((idxRow) => {
+      invalidMap[`upload-${idxRow}`] = ["date"];
+    });
+
+    return { hasDuplicates: true, invalidMap, firstIndex: duplicateIndices[0] } as const;
+  };
+
   const employeeList = useMemo(() => {
     const set = new Set<string>();
     employees.forEach((emp) => set.add(emp.employeeName));
@@ -534,11 +569,6 @@ export function TimesheetUpload() {
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [employees, currentEmployee]);
 
-  const employeeDayCount = useMemo(() => {
-    const map = new Map<string, number>();
-    employees.forEach((emp) => map.set(emp.employeeName, emp.dayCount));
-    return map;
-  }, [employees]);
 
   const ensureEmployeeRows = (name: string) => {
     const trimmed = name.trim();
@@ -638,7 +668,6 @@ export function TimesheetUpload() {
                 <thead className="bg-[var(--surface)] text-[var(--muted)]">
                   <tr>
                     <th className="px-4 py-3 text-left text-[0.7rem] font-semibold uppercase tracking-[0.24em]">Employee</th>
-                    <th className="px-4 py-3 text-left text-[0.7rem] font-semibold uppercase tracking-[0.24em]">Days</th>
                     {entryMode === "manual" ? (
                       <th className="px-4 py-3 text-left text-[0.7rem] font-semibold uppercase tracking-[0.24em]">Action</th>
                     ) : null}
@@ -647,21 +676,19 @@ export function TimesheetUpload() {
                 <tbody className="divide-y divide-[var(--border)]/70 text-[var(--foreground)]">
                   {loadingEmployees ? (
                     <tr>
-                      <td colSpan={entryMode === "manual" ? 3 : 2} className="px-4 py-4 text-center text-[var(--muted)]">Loading employees…</td>
+                      <td colSpan={entryMode === "manual" ? 2 : 1} className="px-4 py-4 text-center text-[var(--muted)]">Loading employees…</td>
                     </tr>
                   ) : null}
                   {employeeList.length === 0 && !loadingEmployees ? (
                     <tr>
-                      <td colSpan={entryMode === "manual" ? 3 : 2} className="px-4 py-4 text-center text-[var(--muted)]">No employees yet. Add one to start a timesheet.</td>
+                      <td colSpan={entryMode === "manual" ? 2 : 1} className="px-4 py-4 text-center text-[var(--muted)]">No employees yet. Add one to start a timesheet.</td>
                     </tr>
                   ) : (
                     employeeList.map((name) => {
-                      const dayCount = employeeDayCount.get(name) ?? 0;
                       const isActive = effectiveEmployee && effectiveEmployee === name;
                       return (
                          <tr key={name} className={`hover:bg-[var(--surface)]/60 ${isActive ? "bg-[var(--accent)]/5" : ""}`}>
                           <td className="px-4 py-3 font-semibold">{name}</td>
-                          <td className="px-4 py-3 text-[var(--muted)]">{dayCount || "—"}</td>
                           {entryMode === "manual" ? (
                             <td className="px-4 py-3">
                               <button
@@ -1256,28 +1283,11 @@ export function TimesheetUpload() {
                           return;
                         }
 
-                        const duplicateKeyCounts = new Map<string, number>();
-                        activeRows.forEach((row) => {
-                          if (!row.employeeName?.trim() || !row.date) return;
-                          const key = `${row.employeeName.trim().toLowerCase()}|${row.date}`;
-                          duplicateKeyCounts.set(key, (duplicateKeyCounts.get(key) ?? 0) + 1);
-                        });
-
-                        const duplicateIndices: number[] = [];
-                        result.rows.forEach((row, i) => {
-                          if (row.isSoftDeleted || !row.employeeName?.trim() || !row.date) return;
-                          const key = `${row.employeeName.trim().toLowerCase()}|${row.date}`;
-                          if ((duplicateKeyCounts.get(key) ?? 0) > 1) duplicateIndices.push(i);
-                        });
-
-                        if (duplicateIndices.length) {
+                        const dupCheck = flagUploadDuplicates(result.rows);
+                        if (dupCheck.hasDuplicates) {
                           setPreviewError("Each employee can only have one row per date. Fix duplicates before saving.");
-                          const invalidMap: Record<string, string[]> = {};
-                          duplicateIndices.forEach((idxRow) => {
-                            invalidMap[`upload-${idxRow}`] = ["date"];
-                          });
-                          setInvalidFields(invalidMap);
-                          scrollToRow(`preview-row-upload-${duplicateIndices[0]}`);
+                          if (dupCheck.invalidMap) setInvalidFields(dupCheck.invalidMap);
+                          if (dupCheck.firstIndex !== undefined) scrollToRow(`preview-row-upload-${dupCheck.firstIndex}`);
                           return;
                         }
 

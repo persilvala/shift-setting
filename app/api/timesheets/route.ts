@@ -105,6 +105,9 @@ export async function POST(request: Request) {
       }
 
       const daySet = uniqueDaysByEmployee.get(row.employeeName.toLowerCase()) ?? new Set<string>();
+      if (daySet.has(row.date)) {
+        errors.push(`Duplicate date ${row.date} for ${row.employeeName}. Each employee needs unique dates.`);
+      }
       daySet.add(row.date);
       if (daySet.size > 20) {
         errors.push(`Timesheets support up to 20 days per employee. ${row.employeeName} exceeds this limit.`);
