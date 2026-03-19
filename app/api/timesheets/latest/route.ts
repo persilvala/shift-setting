@@ -4,6 +4,7 @@ import type { AttendanceStatus } from '@/lib/types';
 
 function mapRow(row: { [key: string]: any }) {
   return {
+    id: row.id,
     employeeName: row.employeeName,
     date: row.date instanceof Date ? row.date.toISOString().slice(0, 10) : row.date,
     timeIn: row.beforeNoonIn ?? null,

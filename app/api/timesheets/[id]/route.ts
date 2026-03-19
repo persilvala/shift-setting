@@ -29,6 +29,7 @@ export async function GET(
       endDate: timesheet.endDate.toISOString(),
       uploadedAt: timesheet.uploadedAt.toISOString(),
       rows: timesheet.rows.map(row => ({
+        id: row.id,
         ...row,
         date: row.date.toISOString(),
         createdAt: row.createdAt.toISOString(),
@@ -160,42 +161,16 @@ export async function PUT(
 
     const employeeNamesForValidation = [...new Set(finalRows.map((r) => r.employeeName))];
 
-    // Respect existing dept and allow upsert for same employee/date (replace existing)
-    const existingRowsForDept = await prisma.timesheetRow.findMany({
-      where: { employeeName: { in: employeeNamesForValidation } },
-      select: { employeeName: true, dept: true },
-    });
-
-    const existingDeptMap = new Map<string, string>();
-    existingRowsForDept.forEach((row) => {
-      if (row.dept && !existingDeptMap.has(row.employeeName)) {
-        existingDeptMap.set(row.employeeName, row.dept);
-      }
-    });
-
-    finalRows.forEach((row) => {
-      const existingDept = existingDeptMap.get(row.employeeName) ?? existingDeptMapAll.get(row.employeeName);
-      if (existingDept && row.dept && row.dept.trim().toLowerCase() !== existingDept.trim().toLowerCase()) {
-        errors.push(`Department mismatch for ${row.employeeName}. Existing: ${existingDept}`);
-      }
-      if (existingDept && (!row.dept || !row.dept.trim())) {
-        row.dept = existingDept;
-      }
-    });
-
-    if (errors.length) {
-      return NextResponse.json({ ok: false, error: Array.from(new Set(errors)).join(' ') }, { status: 400 });
-    }
-
+    // Fetch existing dept for validation
     const existingRowsAll = await prisma.timesheetRow.findMany({
       where: { employeeName: { in: employeeNamesForValidation } },
       select: { employeeName: true, dept: true },
     });
 
-    const existingDeptMapAll = new Map<string, string>();
+    const existingDeptMap = new Map<string, string>();
     existingRowsAll.forEach((row) => {
-      if (row.dept && !existingDeptMapAll.has(row.employeeName)) {
-        existingDeptMapAll.set(row.employeeName, row.dept);
+      if (row.dept && !existingDeptMap.has(row.employeeName)) {
+        existingDeptMap.set(row.employeeName, row.dept);
       }
     });
 

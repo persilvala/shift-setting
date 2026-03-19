@@ -105,9 +105,6 @@ model PayrollEntry {
   payrollId       String
   timesheetRowId  String?
   employeeId      String
-  attendanceDays  Int      @default(0)
-  halfDays        Int      @default(0)
-  absentDays      Int      @default(0)
   basePay         Float    @default(0)
   addedValue      Float    @default(0)
   subtractedValue Float    @default(0)

@@ -26,12 +26,43 @@ type PayrollEntryRow = {
   subtractedValue: number;
   netPay: number;
   isEdited: boolean;
+  timesheetRowIds: string[];
 };
 
 type PayrollData = {
   payroll: PayrollEntryRow[];
   startDate: string;
   endDate: string;
+};
+
+type PendingTimesheet = {
+  id: string;
+  fileName: string | null;
+  format: string | null;
+  entrySource: string | null;
+  startDate: string;
+  endDate: string;
+  uploadedAt: string;
+  totalRows: number;
+  employeeCount: number;
+};
+
+type ProcessedTimesheet = {
+  id: string;
+  fileName: string | null;
+  format: string | null;
+  entrySource: string | null;
+  startDate: string;
+  endDate: string;
+  uploadedAt: string;
+  totalRows: number;
+  employeeCount: number;
+  payrolls: Array<{
+    id: string;
+    totalNetPay: number;
+    basePayPerDay: number;
+    createdAt: string;
+  }>;
 };
 
 function buildAttendanceData(rows: ParsedTimesheetRow[]) {
@@ -41,6 +72,7 @@ function buildAttendanceData(rows: ParsedTimesheetRow[]) {
     attendanceDays: number;
     halfDays: number;
     absentDays: number;
+    timesheetRowIds: string[];
   };
 
   const byEmployee = new Map<string, WorkingRow>();
@@ -56,10 +88,14 @@ function buildAttendanceData(rows: ParsedTimesheetRow[]) {
         attendanceDays: 0,
         halfDays: 0,
         absentDays: 0,
+        timesheetRowIds: [],
       });
     }
 
     const entry = byEmployee.get(key)!;
+    if (row.id) {
+      entry.timesheetRowIds.push(row.id);
+    }
     const status = row.attendanceStatus || "full_day";
     switch (status) {
       case "full_day":
@@ -86,7 +122,6 @@ export default function PayrollPage() {
   const [savedPayrolls, setSavedPayrolls] = useState<SavedPayroll[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(false);
-  const [exporting, setExporting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -150,6 +185,14 @@ export default function PayrollPage() {
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [editingPayrollId, setEditingPayrollId] = useState<string | null>(null);
 
+  const [pendingTimesheets, setPendingTimesheets] = useState<PendingTimesheet[]>([]);
+  const [selectedTimesheetId, setSelectedTimesheetId] = useState<string | null>(null);
+  const [processedTimesheets, setProcessedTimesheets] = useState<ProcessedTimesheet[]>([]);
+  const [processedStartDate, setProcessedStartDate] = useState("");
+  const [processedEndDate, setProcessedEndDate] = useState("");
+  const [loadingPending, setLoadingPending] = useState(false);
+  const [loadingProcessed, setLoadingProcessed] = useState(false);
+
   const fetchEmployees = useCallback(async () => {
     try {
       const response = await fetch("/api/employees");
@@ -175,29 +218,70 @@ export default function PayrollPage() {
   }, []);
 
   useEffect(() => {
-    const stored = sessionStorage.getItem("timesheetData");
-    if (stored) {
+    const fetchPendingTimesheets = async () => {
       try {
-        const parsed = JSON.parse(stored) as ParsedTimesheetRow[];
-        setTimesheetData(parsed);
-      } catch {
-        setTimesheetData([]);
+        setLoadingPending(true);
+        const response = await fetch("/api/timesheets/pending");
+        const data = await response.json();
+        if (data.timesheets) {
+          setPendingTimesheets(data.timesheets);
+        }
+      } catch (err) {
+        console.error("Failed to fetch pending timesheets:", err);
+      } finally {
+        setLoadingPending(false);
       }
-    }
+    };
 
-    const metaRaw = sessionStorage.getItem("timesheetMeta");
-    if (metaRaw) {
-      try {
-        const parsedMeta = JSON.parse(metaRaw) as TimesheetMeta;
-        setTimesheetMeta(parsedMeta);
-      } catch {
-        setTimesheetMeta(null);
-      }
-    }
-
+    fetchPendingTimesheets();
     fetchSavedPayrolls();
     fetchEmployees();
   }, [fetchEmployees]);
+
+  useEffect(() => {
+    const fetchProcessedTimesheets = async () => {
+      try {
+        setLoadingProcessed(true);
+        const params = new URLSearchParams();
+        if (processedStartDate) params.append("startDate", processedStartDate);
+        if (processedEndDate) params.append("endDate", processedEndDate);
+        const response = await fetch(`/api/timesheets/processed?${params.toString()}`);
+        const data = await response.json();
+        if (data.timesheets) {
+          setProcessedTimesheets(data.timesheets);
+        }
+      } catch (err) {
+        console.error("Failed to fetch processed timesheets:", err);
+      } finally {
+        setLoadingProcessed(false);
+      }
+    };
+
+    fetchProcessedTimesheets();
+  }, [processedStartDate, processedEndDate]);
+
+  useEffect(() => {
+    const fetchTimesheetRows = async () => {
+      if (!selectedTimesheetId) return;
+      try {
+        const response = await fetch(`/api/timesheets/${selectedTimesheetId}`);
+        const data = await response.json();
+        if (data.timesheet) {
+          setTimesheetData(data.timesheet.rows || []);
+          setTimesheetMeta({
+            format: data.timesheet.format ?? "excel",
+            timesheetId: data.timesheet.id ?? null,
+            startDate: data.timesheet.startDate?.slice(0, 10) ?? null,
+            endDate: data.timesheet.endDate?.slice(0, 10) ?? null,
+          });
+        }
+      } catch (err) {
+        console.error("Failed to fetch timesheet rows:", err);
+      }
+    };
+
+    fetchTimesheetRows();
+  }, [selectedTimesheetId]);
 
   const fetchSavedPayrolls = async () => {
     try {
@@ -447,6 +531,7 @@ export default function PayrollPage() {
           subtractedValue: 0,
           netPay: Math.round(basePay * 100) / 100,
           isEdited: false,
+          timesheetRowIds: emp.timesheetRowIds,
         };
       });
 
@@ -530,6 +615,33 @@ export default function PayrollPage() {
     setSuccess(null);
 
     try {
+      const rowLevelEntries = payrollData.payroll.flatMap((emp) => {
+        if (!emp.timesheetRowIds.length) {
+          return [
+            {
+              employeeId: emp.employeeId,
+              employeeName: emp.employeeName,
+              timesheetRowId: "",
+              basePayPerDay: emp.basePayPerDay,
+              basePay: emp.basePay,
+              addedValue: emp.addedValue,
+              subtractedValue: emp.subtractedValue,
+              netPay: emp.netPay,
+            },
+          ];
+        }
+        return emp.timesheetRowIds.map((rowId) => ({
+          employeeId: emp.employeeId,
+          employeeName: emp.employeeName,
+          timesheetRowId: rowId,
+          basePayPerDay: emp.basePayPerDay,
+          basePay: emp.basePay / emp.timesheetRowIds.length,
+          addedValue: emp.addedValue / emp.timesheetRowIds.length,
+          subtractedValue: emp.subtractedValue / emp.timesheetRowIds.length,
+          netPay: emp.netPay / emp.timesheetRowIds.length,
+        }));
+      });
+
       const avgBasePay =
         payrollData.payroll.reduce(
           (sum, p) => sum + (p.basePayPerDay ?? 0),
@@ -543,12 +655,16 @@ export default function PayrollPage() {
           startDate: payrollData.startDate,
           endDate: payrollData.endDate,
           basePayPerDay: avgBasePay,
-          payroll: payrollData.payroll,
+          payroll: rowLevelEntries,
           timesheetId: timesheetMeta?.timesheetId,
         }),
       });
 
       const result = await response.json();
+
+      console.log("[Payroll] Save response:", result);
+      console.log("[Payroll] timesheetMeta:", timesheetMeta);
+      console.log("[Payroll] selectedTimesheetId:", selectedTimesheetId);
 
       if (!response.ok || !result.ok) {
         setError(result.error ?? "Failed to save payroll");
@@ -569,6 +685,27 @@ export default function PayrollPage() {
         description: `Saved ${payrollData.payroll.length} payroll entries.`,
       });
       fetchSavedPayrolls();
+
+      const pendingResponse = await fetch("/api/timesheets/pending");
+      const pendingData = await pendingResponse.json();
+      console.log("[Payroll] Pending API response after save:", pendingData);
+      if (pendingData.timesheets) {
+        setPendingTimesheets(pendingData.timesheets);
+        if (!pendingData.timesheets.find((t: PendingTimesheet) => t.id === selectedTimesheetId)) {
+          setSelectedTimesheetId(null);
+          setTimesheetData([]);
+          setTimesheetMeta(null);
+          setPayrollData(null);
+          setPendingPayroll(null);
+        }
+      }
+
+      const processedResponse = await fetch("/api/timesheets/processed");
+      const processedData = await processedResponse.json();
+      console.log("[Payroll] Processed API response after save:", processedData);
+      if (processedData.timesheets) {
+        setProcessedTimesheets(processedData.timesheets);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save payroll");
       addAdminLog({
@@ -579,69 +716,6 @@ export default function PayrollPage() {
       });
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handleExportCsv = async () => {
-    if (!payrollData) {
-      setError("Generate payroll before exporting.");
-      addAdminLog({
-        action: "Payroll export",
-        status: "Failed",
-        description: "No payroll data to export.",
-      });
-      return;
-    }
-
-    setExporting(true);
-    setError(null);
-
-    try {
-      const response = await fetch("/api/payroll/export", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          payroll: payrollData.payroll,
-          startDate: payrollData.startDate,
-          endDate: payrollData.endDate,
-          basePayPerDay: 0,
-          timesheetMeta: timesheetMeta ?? undefined,
-        }),
-      });
-
-      if (!response.ok) {
-        const data = await response.json().catch(() => null);
-        const message = data?.error ?? "Failed to export payroll";
-        throw new Error(message);
-      }
-
-      const blob = await response.blob();
-      const disposition = response.headers.get("Content-Disposition");
-      const match = disposition?.match(/filename="?([^";]+)"?/i);
-      const filename =
-        match?.[1] ??
-        `payroll-${payrollData.startDate}-to-${payrollData.endDate}.csv`;
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = filename;
-      anchor.click();
-      URL.revokeObjectURL(url);
-      addAdminLog({
-        action: "Payroll export",
-        status: "Success",
-        description: `Exported payroll CSV (${filename}).`,
-      });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to export payroll");
-      addAdminLog({
-        action: "Payroll export",
-        status: "Failed",
-        description:
-          err instanceof Error ? err.message : "Failed to export payroll",
-      });
-    } finally {
-      setExporting(false);
     }
   };
 
@@ -794,121 +868,241 @@ export default function PayrollPage() {
         <header className="space-y-2">
           <PageHeader>Payroll</PageHeader>
           <h1 className="text-3xl font-semibold leading-tight text-[var(--foreground)] md:text-4xl">
-            Compute salary from the uploaded timesheet.
+            Generate payroll from pending timesheets.
           </h1>
-          {timesheetData.length ? (
-            <p className="text-sm text-[var(--muted)]">
-              Loaded {timesheetData.length} row(s) from the latest upload
-              {timesheetMeta?.format
-                ? ` (${timesheetMeta.format.toUpperCase()})`
-                : ""}
-              .
-            </p>
-          ) : (
-            <p className="text-sm text-amber-700">
-              No timesheet data found. Upload on the Timesheets tab first.
-            </p>
-          )}
         </header>
 
-        <section className="rounded-3xl border border-[var(--border)] bg-[var(--panel)]/90 p-6 shadow-[0_18px_50px_rgba(16,40,94,0.08)]">
-          <h2 className="text-xl font-semibold text-[var(--foreground)]">
-            Payroll period and filters
-          </h2>
-          <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-            <div>
-              <label className="text-sm font-semibold text-[var(--muted)]">
-                Filter Employee
-              </label>
-              <input
-                type="search"
-                value={selectedUser}
-                onChange={(e) => setSelectedUser(e.target.value)}
-                placeholder="All employees"
-                list="payroll-user-suggestions"
-                className="mt-1 w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
-              />
-              <datalist id="payroll-user-suggestions">
-                {uniqueEmployees.map((name) => (
-                  <option key={name} value={name} />
-                ))}
-              </datalist>
+        {pendingTimesheets.length > 0 && !selectedTimesheetId && (
+          <section className="rounded-3xl border border-[var(--border)] bg-[var(--panel)]/90 p-6 shadow-[0_18px_50px_rgba(16,40,94,0.08)]">
+            <h2 className="text-xl font-semibold text-[var(--foreground)]">
+              Pending Timesheets
+            </h2>
+            <p className="mt-1 text-sm text-[var(--muted)]">
+              Select a timesheet to generate payroll.
+            </p>
+            <div className="mt-4 space-y-3">
+              {pendingTimesheets.map((ts) => (
+                <button
+                  key={ts.id}
+                  onClick={() => setSelectedTimesheetId(ts.id)}
+                  className="w-full rounded-xl border border-[var(--border)] bg-white p-4 text-left transition hover:border-[var(--accent)] hover:shadow-md"
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-semibold text-[var(--foreground)]">
+                        {ts.startDate} → {ts.endDate}
+                      </p>
+                      <p className="mt-1 text-sm text-[var(--muted)]">
+                        {ts.employeeCount} employees · {ts.totalRows} rows ·{" "}
+                        {ts.format?.toUpperCase() ?? "Unknown"}
+                      </p>
+                    </div>
+                    <span className="rounded-full bg-[var(--accent)]/10 px-3 py-1 text-xs font-semibold text-[var(--accent)]">
+                      Select
+                    </span>
+                  </div>
+                </button>
+              ))}
             </div>
-            <div>
-              <label className="text-sm font-semibold text-[var(--muted)]">
-                Start date
-              </label>
-              <input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
-              />
-            </div>
-            <div>
-              <label className="text-sm font-semibold text-[var(--muted)]">
-                End date
-              </label>
-              <input
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
-              />
-            </div>
-            <div>
-              <label className="text-sm font-semibold text-[var(--muted)]">
-                Base pay per day
-              </label>
-              <input
-                type="number"
-                value={defaultBasePayPerDay || ""}
-                onChange={(e) =>
-                  setDefaultBasePayPerDay(parseFloat(e.target.value) || 0)
-                }
-                placeholder="0.00"
-                className="mt-1 w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
-              />
-            </div>
-            <div className="flex items-end">
-              <span className="rounded-full border border-[var(--border)] bg-white px-3 py-2 text-xs font-semibold text-[var(--muted)]">
-                In scope: {filteredRows.length} shift(s) &middot;{" "}
-                {selectedUser.trim()
-                  ? `filtered: "${selectedUser}"`
-                  : `${uniqueEmployees.length || 0} employee(s)`}
-              </span>
-            </div>
-          </div>
+          </section>
+        )}
 
-          <div className="mt-4 flex items-center gap-3 flex-wrap">
-            <button
-              onClick={handleGeneratePayroll}
-              disabled={loading}
-              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[var(--accent-strong)] to-[var(--accent)] px-5 py-3 text-sm font-semibold text-white shadow-[0_14px_40px_rgba(47,109,246,0.24)] transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-80"
-            >
-              {loading ? "Generating..." : "Generate payroll summary"}
-            </button>
-            {payrollData && (
+        {pendingTimesheets.length === 0 && !selectedTimesheetId && (
+          <section className="rounded-3xl border border-[var(--border)] bg-[var(--panel)]/90 p-6 shadow-[0_18px_50px_rgba(16,40,94,0.08)]">
+            <p className="text-center text-[var(--muted)]">
+              No pending timesheets. Upload a timesheet on the Timesheets tab first.
+            </p>
+          </section>
+        )}
+
+        {selectedTimesheetId && (
+          <>
+            <div className="flex items-center justify-between">
               <button
-                onClick={handleSavePayroll}
-                disabled={saving}
-                className="inline-flex items-center gap-2 rounded-xl border border-[var(--accent)] bg-[var(--accent)]/10 px-5 py-3 text-sm font-semibold text-[var(--accent)] transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={() => {
+                  setSelectedTimesheetId(null);
+                  setTimesheetData([]);
+                  setTimesheetMeta(null);
+                  setPayrollData(null);
+                  setPendingPayroll(null);
+                }}
+                className="rounded-full border border-[var(--border)] px-4 py-2 text-sm font-semibold text-[var(--muted)] transition hover:border-[var(--accent)] hover:text-[var(--foreground)]"
               >
-                {saving ? "Saving..." : "Save to database"}
+                ← Back to pending timesheets
               </button>
-            )}
-            {error && (
-              <span className="text-sm font-semibold text-red-600">
-                {error}
-              </span>
-            )}
-            {success && (
-              <span className="text-sm font-semibold text-emerald-600">
-                {success}
-              </span>
-            )}
-          </div>
-        </section>
+              {timesheetMeta && (
+                <p className="text-sm text-[var(--muted)]">
+                  Selected: {timesheetMeta.startDate} → {timesheetMeta.endDate} (
+                  {timesheetData.length} rows)
+                </p>
+              )}
+            </div>
+
+            <section className="rounded-3xl border border-[var(--border)] bg-[var(--panel)]/90 p-6 shadow-[0_18px_50px_rgba(16,40,94,0.08)]">
+              <h2 className="text-xl font-semibold text-[var(--foreground)]">
+                Payroll period and filters
+              </h2>
+              <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+                <div>
+                  <label className="text-sm font-semibold text-[var(--muted)]">
+                    Filter Employee
+                  </label>
+                  <input
+                    type="search"
+                    value={selectedUser}
+                    onChange={(e) => setSelectedUser(e.target.value)}
+                    placeholder="All employees"
+                    list="payroll-user-suggestions"
+                    className="mt-1 w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
+                  />
+                  <datalist id="payroll-user-suggestions">
+                    {uniqueEmployees.map((name) => (
+                      <option key={name} value={name} />
+                    ))}
+                  </datalist>
+                </div>
+                <div>
+                  <label className="text-sm font-semibold text-[var(--muted)]">
+                    Start date
+                  </label>
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="mt-1 w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-semibold text-[var(--muted)]">
+                    End date
+                  </label>
+                  <input
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="mt-1 w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-semibold text-[var(--muted)]">
+                    Base pay per day
+                  </label>
+                  <input
+                    type="number"
+                    value={defaultBasePayPerDay || ""}
+                    onChange={(e) =>
+                      setDefaultBasePayPerDay(parseFloat(e.target.value) || 0)
+                    }
+                    placeholder="0.00"
+                    className="mt-1 w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
+                  />
+                </div>
+                <div className="flex items-end">
+                  <span className="rounded-full border border-[var(--border)] bg-white px-3 py-2 text-xs font-semibold text-[var(--muted)]">
+                    In scope: {filteredRows.length} shift(s) &middot;{" "}
+                    {selectedUser.trim()
+                      ? `filtered: "${selectedUser}"`
+                      : `${uniqueEmployees.length || 0} employee(s)`}
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-4 flex items-center gap-3 flex-wrap">
+                <button
+                  onClick={handleGeneratePayroll}
+                  disabled={loading}
+                  className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[var(--accent-strong)] to-[var(--accent)] px-5 py-3 text-sm font-semibold text-white shadow-[0_14px_40px_rgba(47,109,246,0.24)] transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-80"
+                >
+                  {loading ? "Generating..." : "Generate payroll summary"}
+                </button>
+                {payrollData && (
+                  <button
+                    onClick={handleSavePayroll}
+                    disabled={saving}
+                    className="inline-flex items-center gap-2 rounded-xl border border-[var(--accent)] bg-[var(--accent)]/10 px-5 py-3 text-sm font-semibold text-[var(--accent)] transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {saving ? "Saving..." : "Save to database"}
+                  </button>
+                )}
+                {error && (
+                  <span className="text-sm font-semibold text-red-600">
+                    {error}
+                  </span>
+                )}
+                {success && (
+                  <span className="text-sm font-semibold text-emerald-600">
+                    {success}
+                  </span>
+                )}
+              </div>
+            </section>
+          </>
+        )}
+
+        {selectedTimesheetId && processedTimesheets.length > 0 && (
+          <section className="rounded-3xl border border-[var(--border)] bg-[var(--panel)]/90 p-6 shadow-[0_18px_50px_rgba(16,40,94,0.08)]">
+            <h2 className="text-xl font-semibold text-[var(--foreground)]">
+              Processed Timesheets
+            </h2>
+            <p className="mt-1 text-sm text-[var(--muted)]">
+              Timesheets that have been processed for payroll.
+            </p>
+            <div className="mt-4 flex gap-3 flex-wrap">
+              <div>
+                <label className="text-sm font-semibold text-[var(--muted)]">
+                  Start date
+                </label>
+                <input
+                  type="date"
+                  value={processedStartDate}
+                  onChange={(e) => setProcessedStartDate(e.target.value)}
+                  className="mt-1 w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
+                />
+              </div>
+              <div>
+                <label className="text-sm font-semibold text-[var(--muted)]">
+                  End date
+                </label>
+                <input
+                  type="date"
+                  value={processedEndDate}
+                  onChange={(e) => setProcessedEndDate(e.target.value)}
+                  className="mt-1 w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
+                />
+              </div>
+            </div>
+            <div className="mt-4 space-y-3">
+              {processedTimesheets.map((ts) => (
+                <div
+                  key={ts.id}
+                  className="rounded-xl border border-[var(--border)] bg-white p-4"
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-semibold text-[var(--foreground)]">
+                        {ts.startDate} → {ts.endDate}
+                      </p>
+                      <p className="mt-1 text-sm text-[var(--muted)]">
+                        {ts.employeeCount} employees · {ts.totalRows} rows ·{" "}
+                        {ts.format?.toUpperCase() ?? "Unknown"}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm text-[var(--muted)]">
+                        {ts.payrolls.length} payroll record(s)
+                      </p>
+                      {ts.payrolls[0] && (
+                        <p className="font-semibold text-[var(--accent)]">
+                          Total: ${ts.payrolls[0].totalNetPay.toFixed(2)}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         {payrollData && (
           <section className="rounded-3xl border border-[var(--border)] bg-[var(--panel)]/90 p-6 shadow-[0_24px_70px_rgba(16,40,94,0.1)]">
@@ -934,14 +1128,6 @@ export default function PayrollPage() {
                       Source: {timesheetMeta.format.toUpperCase()}
                     </span>
                   ) : null}
-                  <button
-                    type="button"
-                    onClick={handleExportCsv}
-                    disabled={exporting}
-                    className="inline-flex items-center gap-2 rounded-full border border-[var(--accent)] bg-[var(--accent)]/10 px-4 py-2 text-xs font-semibold text-[var(--accent)] transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {exporting ? "Exporting..." : "Export payroll CSV"}
-                  </button>
                 </div>
               </div>
             </div>

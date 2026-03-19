@@ -4,9 +4,7 @@ import { prisma } from "@/lib/db";
 type PayrollEntryData = {
   employeeId: string;
   employeeName: string;
-  attendanceDays: number;
-  halfDays: number;
-  absentDays: number;
+  timesheetRowId: string;
   basePayPerDay: number | null;
   basePay: number;
   addedValue: number;
@@ -37,9 +35,7 @@ export async function POST(request: Request) {
 
     const entriesToCreate: {
       employeeId: string;
-      attendanceDays: number;
-      halfDays: number;
-      absentDays: number;
+      timesheetRowId: string;
       basePay: number;
       addedValue: number;
       subtractedValue: number;
@@ -66,9 +62,7 @@ export async function POST(request: Request) {
 
         entriesToCreate.push({
           employeeId: employee.id,
-          attendanceDays: entry.attendanceDays,
-          halfDays: entry.halfDays,
-          absentDays: entry.absentDays,
+          timesheetRowId: entry.timesheetRowId,
           basePay: entry.basePay,
           addedValue: entry.addedValue,
           subtractedValue: entry.subtractedValue,
@@ -83,6 +77,13 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
+
+    console.log("✓ Payroll save request:", {
+      timesheetId,
+      startDate,
+      endDate,
+      entryCount: entriesToCreate.length,
+    });
 
     const createdPayroll = await prisma.payroll.create({
       data: {
