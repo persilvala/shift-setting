@@ -101,6 +101,7 @@ export function TimesheetUpload() {
   const [loadingRows, setLoadingRows] = useState(false);
   const [employees, setEmployees] = useState<EmployeeSummary[]>([]);
   const [loadingEmployees, setLoadingEmployees] = useState(false);
+  const [activeTimesheetId, setActiveTimesheetId] = useState<string | null>(null);
 
   const hydrateFromServer = (payload: TimesheetPayload) => {
     const rows = payload.rows ?? [];
@@ -108,6 +109,7 @@ export function TimesheetUpload() {
     setStartDate(payload.startDate ?? null);
     setEndDate(payload.endDate ?? null);
     setManualRows(rows.map(mapParsedToManualRow));
+    setActiveTimesheetId(payload.timesheetId ?? null);
   };
 
   const loadEmployees = async () => {
@@ -146,8 +148,36 @@ export function TimesheetUpload() {
       setEndDate(data.timesheet?.endDate ?? null);
       setBulkDept(rows[0]?.dept ?? "");
       setBulkName(name);
+      setActiveTimesheetId(data.timesheet?.id ?? null);
     } catch (err) {
       console.error("Failed to load employee rows", err);
+    } finally {
+      setLoadingRows(false);
+    }
+  };
+
+  const updateTimesheetRows = async (rows: ParsedTimesheetRow[]) => {
+    if (!activeTimesheetId) return true;
+    try {
+      setLoadingRows(true);
+      const response = await fetch(`/api/timesheets/${activeTimesheetId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rows }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) {
+        setError(data.error ?? "Failed to save timesheet");
+        return false;
+      }
+      hydrateFromServer(data as TimesheetPayload);
+      loadEmployees();
+      setPreviewError(null);
+      setInvalidFields({});
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save timesheet");
+      return false;
     } finally {
       setLoadingRows(false);
     }
@@ -284,6 +314,11 @@ export function TimesheetUpload() {
       setError("Upload and parse a timesheet first.");
       return;
     }
+    // For upload flow, ensure edits are stored before moving on
+    if (activeTimesheetId) {
+      const ok = await updateTimesheetRows(result.rows);
+      if (!ok) return;
+    }
     router.push("/admin/payroll");
   };
 
@@ -309,8 +344,10 @@ export function TimesheetUpload() {
 
     try {
       setLoadingRows(true);
-      const response = await fetch("/api/timesheets", {
-        method: "POST",
+      const url = activeTimesheetId ? `/api/timesheets/${activeTimesheetId}` : "/api/timesheets";
+      const method = activeTimesheetId ? "PUT" : "POST";
+      const response = await fetch(url, {
+        method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ rows: payloadRows }),
       });
@@ -480,7 +517,7 @@ export function TimesheetUpload() {
     });
 
     if (invalid.length) {
-      setPreviewError("Add employee, date, time in/out, hours, and department for every row before saving.");
+                        setPreviewError("Add employee, date, time in/out, hours, and department for every row before saving.");
       const invalidMap: Record<string, string[]> = {};
       invalid.forEach((row) => {
         const status = row.attendanceStatus ?? "full_day";
@@ -1242,7 +1279,7 @@ export function TimesheetUpload() {
                     <>
                     <button
                       type="button"
-                      onClick={() => {
+                      onClick={async () => {
                         if (!result) return;
                         setPreviewError(null);
                         setInvalidFields({});
@@ -1292,8 +1329,10 @@ export function TimesheetUpload() {
                         }
 
                         setInvalidFields({});
-                        persistUploadRows(result.rows);
-                        setUploadMessage("Upload rows saved. Soft-deleted rows excluded from payroll.");
+                        const ok = await updateTimesheetRows(result.rows);
+                        if (ok) {
+                          setUploadMessage("Upload rows saved.");
+                        }
                       }}
                         className="rounded-full bg-[var(--accent)] px-4 py-2 text-xs font-semibold text-white shadow-[0_10px_24px_rgba(47,109,246,0.2)] hover:scale-[1.01]"
                       >
