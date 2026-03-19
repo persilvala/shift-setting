@@ -183,6 +183,44 @@ export function TimesheetUpload() {
     }
   };
 
+  const saveUploadRows = async (rows: ParsedTimesheetRow[]) => {
+    try {
+      setLoadingRows(true);
+      const payloadRows = rows.map((row) => ({
+        employeeName: row.employeeName,
+        dept: row.dept ?? "",
+        date: row.date,
+        timeIn: row.timeIn,
+        timeOut: row.timeOut,
+        totalHours: row.totalHours,
+        attendanceStatus: row.attendanceStatus ?? "full_day",
+      }));
+
+      const response = await fetch("/api/timesheets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rows: payloadRows }),
+      });
+
+      const data = await response.json();
+      if (!response.ok || !data.ok) {
+        setError(data.error ?? "Failed to save timesheet");
+        return false;
+      }
+
+      hydrateFromServer(data as TimesheetPayload);
+      loadEmployees();
+      setPreviewError(null);
+      setInvalidFields({});
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save timesheet");
+      return false;
+    } finally {
+      setLoadingRows(false);
+    }
+  };
+
   const scrollToRow = (id: string) => {
     if (typeof document === "undefined") return;
     const el = document.getElementById(id);
@@ -1329,7 +1367,9 @@ export function TimesheetUpload() {
                         }
 
                         setInvalidFields({});
-                        const ok = await updateTimesheetRows(result.rows);
+                        const ok = activeTimesheetId
+                          ? await updateTimesheetRows(result.rows)
+                          : await saveUploadRows(result.rows);
                         if (ok) {
                           setUploadMessage("Upload rows saved.");
                         }
