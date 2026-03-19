@@ -133,6 +133,27 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, error: 'No valid rows to save.' }, { status: 400 });
     }
 
+    const combos = dedupedRows
+      .filter((row) => row.employeeName && row.date)
+      .map((row) => ({ employeeName: row.employeeName, date: new Date(row.date) }));
+
+    if (combos.length) {
+      const conflicts = await prisma.timesheetRow.findMany({
+        where: { OR: combos.map((c) => ({ employeeName: c.employeeName, date: c.date })) },
+        select: { employeeName: true, date: true },
+      });
+
+      if (conflicts.length) {
+        const details = conflicts
+          .map((r) => `${r.employeeName} on ${r.date.toISOString().slice(0, 10)}`)
+          .join(', ');
+        return NextResponse.json(
+          { ok: false, error: `Duplicate dates already exist for this employee: ${details}. Remove conflicts before saving.` },
+          { status: 400 }
+        );
+      }
+    }
+
     const startDate = new Date(Math.min(...dates.map((d) => d.getTime())));
     const endDate = new Date(Math.max(...dates.map((d) => d.getTime())));
 

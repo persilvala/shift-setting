@@ -158,6 +158,31 @@ export async function PUT(
       return NextResponse.json({ ok: false, error: 'No valid rows to save.' }, { status: 400 });
     }
 
+    // Check for duplicates already stored in other timesheets
+    const combos = finalRows
+      .filter((row) => row.employeeName && row.date)
+      .map((row) => ({ employeeName: row.employeeName, date: new Date(row.date) }));
+
+    if (combos.length) {
+      const conflicts = await prisma.timesheetRow.findMany({
+        where: {
+          timesheetId: { not: id },
+          OR: combos.map((c) => ({ employeeName: c.employeeName, date: c.date })),
+        },
+        select: { employeeName: true, date: true },
+      });
+
+      if (conflicts.length) {
+        const details = conflicts
+          .map((r) => `${r.employeeName} on ${r.date.toISOString().slice(0, 10)}`)
+          .join(', ');
+        return NextResponse.json(
+          { ok: false, error: `Duplicate dates already exist for this employee: ${details}. Remove conflicts before saving.` },
+          { status: 400 }
+        );
+      }
+    }
+
     const startDate = new Date(Math.min(...dateList.map((d) => d.getTime())));
     const endDate = new Date(Math.max(...dateList.map((d) => d.getTime())));
 
