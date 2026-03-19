@@ -41,6 +41,7 @@ type TimesheetPayload = {
   endDate?: string | null;
   timesheetId?: string;
   fileName?: string | null;
+  mergedFromDatabaseCount?: number;
 };
 
 type TimesheetLoadResponse = {
@@ -459,6 +460,10 @@ export function TimesheetUpload() {
       }));
 
       hydrateFromServer({ ...(data as TimesheetPayload), rows });
+      const mergedCount = (data as TimesheetPayload).mergedFromDatabaseCount ?? 0;
+      if (mergedCount > 0) {
+        setUploadMessage(`Merged ${mergedCount} existing row${mergedCount === 1 ? "" : "s"} from the database.`);
+      }
       const dupCheck = flagUploadDuplicates(rows);
       if (dupCheck.hasDuplicates) {
         setPreviewError("Each employee can only have one row per date. Fix duplicates before saving.");
@@ -556,6 +561,19 @@ export function TimesheetUpload() {
         row.employeeName.trim() &&
         row.employeeName.toLowerCase() === effectiveEmployee.toLowerCase()
     );
+
+    const negativeHours = active.filter((row) => row.totalHours !== null && row.totalHours !== undefined && Number(row.totalHours) < 0);
+    if (negativeHours.length) {
+      setPreviewError("Hours cannot be negative.");
+      const invalidMap: Record<string, string[]> = {};
+      negativeHours.forEach((row) => {
+        invalidMap[row.id] = ["totalHours"];
+      });
+      setInvalidFields(invalidMap);
+      const firstNeg = negativeHours[0];
+      scrollToRow(`preview-row-${firstNeg.id}`);
+      return;
+    }
 
     const duplicateKeys = new Map<string, number>();
     active.forEach((row) => {
@@ -670,6 +688,12 @@ export function TimesheetUpload() {
       return;
     }
     setError(null);
+    setPreviewError(null);
+    setInvalidFields({});
+    setActiveTimesheetId(null);
+    setStartDate(null);
+    setEndDate(null);
+    setManualRows([]);
     setCurrentEmployee(trimmed);
     setManualEmployee(trimmed);
     setBulkName(trimmed);
@@ -1371,6 +1395,25 @@ export function TimesheetUpload() {
                           );
                           if (idx >= 0) {
                             scrollToRow(`preview-row-upload-${idx}`);
+                          }
+                          return;
+                        }
+
+                        const negativeHours = activeRows.filter(
+                          (row) => row.totalHours !== null && row.totalHours !== undefined && Number(row.totalHours) < 0
+                        );
+
+                        if (negativeHours.length) {
+                          setPreviewError("Hours cannot be negative.");
+                          const invalidMap: Record<string, string[]> = {};
+                          negativeHours.forEach((row) => {
+                            const idxRow = result.rows.indexOf(row);
+                            invalidMap[`upload-${idxRow}`] = ["totalHours"];
+                          });
+                          setInvalidFields(invalidMap);
+                          const first = result.rows.indexOf(negativeHours[0]);
+                          if (first >= 0) {
+                            scrollToRow(`preview-row-upload-${first}`);
                           }
                           return;
                         }

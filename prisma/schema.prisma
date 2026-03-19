@@ -83,6 +83,7 @@ model TimesheetRow {
   @@index([employeeName])
   @@index([employeeId])
   @@index([date])
+  @@unique([employeeId, date])
 }
 
 model Payroll {

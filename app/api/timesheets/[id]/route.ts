@@ -124,6 +124,9 @@ export async function PUT(
         if (row.totalHours === null || row.totalHours === undefined || Number.isNaN(Number(row.totalHours))) {
           errors.push(`Hours are required for ${row.employeeName} on ${row.date}.`);
         }
+        if (row.totalHours !== null && row.totalHours !== undefined && Number(row.totalHours) < 0) {
+          errors.push(`Hours cannot be negative for ${row.employeeName} on ${row.date}.`);
+        }
       }
 
       const empKey = row.employeeName.toLowerCase();
@@ -158,61 +161,6 @@ export async function PUT(
       return NextResponse.json({ ok: false, error: 'No valid rows to save.' }, { status: 400 });
     }
 
-    const employeeNamesForValidation = [...new Set(finalRows.map((r) => r.employeeName))];
-
-    // Respect existing dept and allow upsert for same employee/date (replace existing)
-    const existingRowsForDept = await prisma.timesheetRow.findMany({
-      where: { employeeName: { in: employeeNamesForValidation } },
-      select: { employeeName: true, dept: true },
-    });
-
-    const existingDeptMap = new Map<string, string>();
-    existingRowsForDept.forEach((row) => {
-      if (row.dept && !existingDeptMap.has(row.employeeName)) {
-        existingDeptMap.set(row.employeeName, row.dept);
-      }
-    });
-
-    finalRows.forEach((row) => {
-      const existingDept = existingDeptMap.get(row.employeeName) ?? existingDeptMapAll.get(row.employeeName);
-      if (existingDept && row.dept && row.dept.trim().toLowerCase() !== existingDept.trim().toLowerCase()) {
-        errors.push(`Department mismatch for ${row.employeeName}. Existing: ${existingDept}`);
-      }
-      if (existingDept && (!row.dept || !row.dept.trim())) {
-        row.dept = existingDept;
-      }
-    });
-
-    if (errors.length) {
-      return NextResponse.json({ ok: false, error: Array.from(new Set(errors)).join(' ') }, { status: 400 });
-    }
-
-    const existingRowsAll = await prisma.timesheetRow.findMany({
-      where: { employeeName: { in: employeeNamesForValidation } },
-      select: { employeeName: true, dept: true },
-    });
-
-    const existingDeptMapAll = new Map<string, string>();
-    existingRowsAll.forEach((row) => {
-      if (row.dept && !existingDeptMapAll.has(row.employeeName)) {
-        existingDeptMapAll.set(row.employeeName, row.dept);
-      }
-    });
-
-    finalRows.forEach((row) => {
-      const existingDept = existingDeptMap.get(row.employeeName);
-      if (existingDept && row.dept && row.dept.trim().toLowerCase() !== existingDept.trim().toLowerCase()) {
-        errors.push(`Department mismatch for ${row.employeeName}. Existing: ${existingDept}`);
-      }
-      if (existingDept && (!row.dept || !row.dept.trim())) {
-        row.dept = existingDept;
-      }
-    });
-
-    if (errors.length) {
-      return NextResponse.json({ ok: false, error: Array.from(new Set(errors)).join(' ') }, { status: 400 });
-    }
-
     const startDate = new Date(Math.min(...dateList.map((d) => d.getTime())));
     const endDate = new Date(Math.max(...dateList.map((d) => d.getTime())));
 
@@ -228,56 +176,96 @@ export async function PUT(
       );
       const employeeMap = new Map(employees.map((emp) => [emp.employeeName, emp]));
 
-      await tx.timesheetRow.deleteMany({ where: { timesheetId: id, employeeName: { in: employeeNames } } });
-
-      await tx.timesheetRow.createMany({
-        data: finalRows.map((row) => {
+      const keys = finalRows
+        .map((row) => {
           const emp = employeeMap.get(row.employeeName);
-          const status = row.attendanceStatus ?? 'full_day';
-          const totalHours = status === 'absent' ? null : row.totalHours ?? null;
-          const timeIn = status === 'absent' ? null : row.timeIn ?? null;
-          const timeOut = status === 'absent' ? null : row.timeOut ?? null;
-          return {
-            timesheetId: id,
-            employeeName: row.employeeName,
-            employeeId: emp?.id,
-            date: new Date(row.date),
-            dept: row.dept || null,
-            beforeNoonIn: timeIn,
-            beforeNoonOut: timeOut,
-            totalHours,
-            workHours: totalHours,
-            attendanceStatus: status,
-          };
-        }),
+          if (!emp?.id) return null;
+          return { employeeId: emp.id, date: new Date(row.date) };
+        })
+        .filter(Boolean) as { employeeId: string; date: Date }[];
+
+      const existingRows = keys.length
+        ? await tx.timesheetRow.findMany({
+            where: {
+              OR: keys.map((k) => ({ employeeId: k.employeeId, date: k.date })),
+            },
+          })
+        : [];
+
+      const existingMap = new Map<string, (typeof existingRows)[number]>();
+      existingRows.forEach((row) => {
+        existingMap.set(`${row.employeeId}|${row.date.toISOString().slice(0, 10)}`, row);
       });
+
+      const results: (typeof existingRows)[number][] = [];
+
+      for (const row of finalRows) {
+        const emp = employeeMap.get(row.employeeName);
+        const status = row.attendanceStatus ?? 'full_day';
+        const incomingHours = status === 'absent' ? 0 : Number(row.totalHours ?? 0);
+        const key = `${emp?.id ?? ''}|${row.date}`;
+        const existing = existingMap.get(key);
+        const existingHours = existing ? Number(existing.totalHours ?? existing.workHours ?? 0) : 0;
+        const totalHours = status === 'absent' ? null : existingHours + incomingHours;
+        const dept = row.dept?.trim() || existing?.dept || null;
+        const timeIn = status === 'absent' ? null : row.timeIn ?? existing?.beforeNoonIn ?? null;
+        const timeOut = status === 'absent' ? null : row.timeOut ?? existing?.beforeNoonOut ?? null;
+
+        if (existing) {
+          const updated = await tx.timesheetRow.update({
+            where: { id: existing.id },
+            data: {
+              timesheetId: id,
+              dept,
+              beforeNoonIn: timeIn,
+              beforeNoonOut: timeOut,
+              totalHours,
+              workHours: totalHours,
+              attendanceStatus: status,
+            },
+          });
+          results.push(updated);
+        } else {
+          const created = await tx.timesheetRow.create({
+            data: {
+              timesheetId: id,
+              employeeName: row.employeeName,
+              employeeId: emp?.id,
+              date: new Date(row.date),
+              dept,
+              beforeNoonIn: timeIn,
+              beforeNoonOut: timeOut,
+              totalHours,
+              workHours: totalHours,
+              attendanceStatus: status,
+            },
+          });
+          results.push(created);
+        }
+      }
 
       await tx.timesheet.update({
         where: { id },
         data: {
-          totalRows: finalRows.length,
+          totalRows: results.length,
           startDate,
           endDate,
         },
       });
 
-      const allRows = await tx.timesheetRow.findMany({
-        where: { timesheetId: id },
-      });
-
-      const updatedStart = allRows.length
-        ? new Date(Math.min(...allRows.map((r) => r.date.getTime())))
-        : startDate;
-      const updatedEnd = allRows.length
-        ? new Date(Math.max(...allRows.map((r) => r.date.getTime())))
-        : endDate;
-
       const refreshedRows = await tx.timesheetRow.findMany({
-        where: { timesheetId: id, employeeName: { in: employeeNames } },
+        where: { timesheetId: id },
         orderBy: [{ date: 'asc' }, { employeeName: 'asc' }],
       });
 
-      return { rows: refreshedRows, startDate: updatedStart, endDate: updatedEnd, totalRows: allRows.length };
+      const updatedStart = refreshedRows.length
+        ? new Date(Math.min(...refreshedRows.map((r) => r.date.getTime())))
+        : startDate;
+      const updatedEnd = refreshedRows.length
+        ? new Date(Math.max(...refreshedRows.map((r) => r.date.getTime())))
+        : endDate;
+
+      return { rows: refreshedRows, startDate: updatedStart, endDate: updatedEnd, totalRows: refreshedRows.length };
     });
 
     return NextResponse.json({
