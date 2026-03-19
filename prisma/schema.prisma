@@ -28,15 +28,16 @@ model Employee {
 }
 
 model Timesheet {
-  id         String         @id @default(cuid())
-  fileName   String
-  format     String
-  startDate  DateTime
-  endDate    DateTime
-  totalRows  Int
-  uploadedAt DateTime       @default(now())
-  rows       TimesheetRow[]
-  payrolls   Payroll[]
+  id          String         @id @default(cuid())
+  fileName    String?
+  format      String
+  startDate   DateTime
+  endDate     DateTime
+  totalRows   Int
+  uploadedAt  DateTime       @default(now())
+  rows        TimesheetRow[]
+  payrolls    Payroll[]
+  entrySource String?        @default("upload")
 
   @@index([uploadedAt])
 }

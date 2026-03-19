@@ -38,6 +38,12 @@ type ManualRequestRow = {
   attendanceStatus?: AttendanceStatus;
 };
 
+type TimesheetCreateOptions = {
+  fileName?: string | null;
+  format?: string | null;
+  entrySource?: string | null;
+};
+
 function mapRowResponse(row: { [key: string]: any }) {
   return {
     employeeName: row.employeeName,
@@ -58,6 +64,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const rows = (body?.rows ?? []) as ManualRequestRow[];
+    const options = (body ?? {}) as TimesheetCreateOptions;
 
     if (!Array.isArray(rows) || !rows.length) {
       return NextResponse.json({ ok: false, error: 'At least one row is required.' }, { status: 400 });
@@ -133,35 +140,55 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, error: 'No valid rows to save.' }, { status: 400 });
     }
 
-    const combos = dedupedRows
-      .filter((row) => row.employeeName && row.date)
-      .map((row) => ({ employeeName: row.employeeName, date: new Date(row.date) }));
+    const employeeNames = [...new Set(dedupedRows.map((r) => r.employeeName))];
 
-    if (combos.length) {
-      const conflicts = await prisma.timesheetRow.findMany({
-        where: { OR: combos.map((c) => ({ employeeName: c.employeeName, date: c.date })) },
-        select: { employeeName: true, date: true },
-      });
+    // Check existing dept and duplicate dates in DB
+    const existingRows = await prisma.timesheetRow.findMany({
+      where: { employeeName: { in: employeeNames } },
+      select: { employeeName: true, dept: true, date: true },
+    });
 
-      if (conflicts.length) {
-        const details = conflicts
-          .map((r) => `${r.employeeName} on ${r.date.toISOString().slice(0, 10)}`)
-          .join(', ');
-        return NextResponse.json(
-          { ok: false, error: `Duplicate dates already exist for this employee: ${details}. Remove conflicts before saving.` },
-          { status: 400 }
-        );
+    const existingDeptMap = new Map<string, string>();
+    const existingDateMap = new Map<string, Set<string>>();
+    existingRows.forEach((row) => {
+      if (row.dept) {
+        if (!existingDeptMap.has(row.employeeName)) existingDeptMap.set(row.employeeName, row.dept);
       }
+      const set = existingDateMap.get(row.employeeName) ?? new Set<string>();
+      set.add(row.date.toISOString().slice(0, 10));
+      existingDateMap.set(row.employeeName, set);
+    });
+
+    dedupedRows.forEach((row) => {
+      const existingDept = existingDeptMap.get(row.employeeName);
+      if (existingDept && row.dept && row.dept.trim().toLowerCase() !== existingDept.trim().toLowerCase()) {
+        errors.push(`Department mismatch for ${row.employeeName}. Existing: ${existingDept}`);
+      }
+      const dateset = existingDateMap.get(row.employeeName);
+      if (dateset && dateset.has(row.date)) {
+        errors.push(`Duplicate date ${row.date} already exists for ${row.employeeName}.`);
+      }
+      if (existingDept && (!row.dept || !row.dept.trim())) {
+        row.dept = existingDept;
+      }
+    });
+
+    if (errors.length) {
+      return NextResponse.json({ ok: false, error: Array.from(new Set(errors)).join(' ') }, { status: 400 });
     }
 
     const startDate = new Date(Math.min(...dates.map((d) => d.getTime())));
     const endDate = new Date(Math.max(...dates.map((d) => d.getTime())));
 
-    const employeeNames = [...new Set(dedupedRows.map((r) => r.employeeName))];
+    const employeeNamesSet = [...new Set(dedupedRows.map((r) => r.employeeName))];
+
+    const format = options.format ?? 'manual';
+    const fileName = options.fileName ?? (format === 'manual' ? 'manual-entry' : 'upload');
+    const entrySource = options.entrySource ?? (format === 'manual' ? 'manual' : 'upload');
 
     const timesheet = await prisma.$transaction(async (tx) => {
       const employees = await Promise.all(
-        employeeNames.map(async (name) => {
+        employeeNamesSet.map(async (name) => {
           const existing = await tx.employee.findFirst({ where: { employeeName: name } });
           if (existing) return existing;
           return tx.employee.create({ data: { employeeName: name } });
@@ -172,8 +199,9 @@ export async function POST(request: Request) {
 
       return tx.timesheet.create({
         data: {
-          fileName: 'manual-entry',
-          format: 'manual',
+          fileName: fileName ?? null,
+          format,
+          entrySource,
           startDate,
           endDate,
           totalRows: dedupedRows.length,

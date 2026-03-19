@@ -22,6 +22,7 @@ const PREVIEW_LIMIT = 50;
 type ManualRow = {
   id: string;
   employeeName: string;
+  employeeId?: string | null;
   date: string;
   totalHours: number | null;
   dept?: string | null;
@@ -39,6 +40,7 @@ type TimesheetPayload = {
   startDate?: string | null;
   endDate?: string | null;
   timesheetId?: string;
+  fileName?: string | null;
 };
 
 type TimesheetLoadResponse = {
@@ -64,6 +66,7 @@ type EmployeeSummary = { id: string; employeeName: string; dayCount: number };
 const mapParsedToManualRow = (row: ParsedTimesheetRow, index: number): ManualRow => ({
   id: (row as any).id ?? `manual-${index}-${row.employeeName}-${row.date ?? ""}`,
   employeeName: row.employeeName ?? "",
+  employeeId: (row as any).employeeId ?? null,
   date: row.date ?? "",
   totalHours: row.totalHours ?? row.workHours ?? null,
   dept: row.dept ?? "",
@@ -108,7 +111,9 @@ export function TimesheetUpload() {
     setResult(payload);
     setStartDate(payload.startDate ?? null);
     setEndDate(payload.endDate ?? null);
-    setManualRows(rows.map(mapParsedToManualRow));
+    if (payload.format === "manual" || entryMode === "manual") {
+      setManualRows(rows.map(mapParsedToManualRow));
+    }
     setActiveTimesheetId(payload.timesheetId ?? null);
   };
 
@@ -199,7 +204,12 @@ export function TimesheetUpload() {
       const response = await fetch("/api/timesheets", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rows: payloadRows }),
+        body: JSON.stringify({
+          rows: payloadRows,
+          fileName: result?.timesheetId ? result.fileName ?? "upload" : result?.format ? `${result.format}-upload` : "upload",
+          format: result?.format ?? "excel",
+          entrySource: "upload",
+        }),
       });
 
       const data = await response.json();
@@ -293,7 +303,7 @@ export function TimesheetUpload() {
     if (entryMode === "manual") {
       const scoped = effectiveEmployee.toLowerCase();
       const filtered = scoped ? manualRows.filter((row) => (row.employeeName || "").toLowerCase() === scoped) : [];
-      return filtered.slice(0, PREVIEW_LIMIT);
+      return filtered;
     }
     return (result?.rows ?? []).slice(0, PREVIEW_LIMIT);
   }, [effectiveEmployee, entryMode, manualRows, result]);
@@ -305,6 +315,14 @@ export function TimesheetUpload() {
   useEffect(() => {
     loadEmployees();
   }, []);
+
+  useEffect(() => {
+    if (entryMode !== "manual") return;
+    if (!effectiveEmployee) return;
+    const key = effectiveEmployee.toLowerCase();
+    const found = employees.find((emp) => emp.employeeName.toLowerCase() === key);
+    loadEmployeeRows(effectiveEmployee, found?.id);
+  }, [entryMode, effectiveEmployee, employees]);
 
   useEffect(() => {
     if (entryMode !== "manual") return;
@@ -656,7 +674,6 @@ export function TimesheetUpload() {
     setManualEmployee(trimmed);
     setBulkName(trimmed);
     setEntryMode("manual");
-    setManualRows([]);
     const found = employees.find((emp) => emp.employeeName.toLowerCase() === trimmed.toLowerCase());
     loadEmployeeRows(trimmed, found?.id);
     if (!found) {

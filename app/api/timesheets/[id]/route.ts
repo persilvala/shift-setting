@@ -158,29 +158,53 @@ export async function PUT(
       return NextResponse.json({ ok: false, error: 'No valid rows to save.' }, { status: 400 });
     }
 
-    // Check for duplicates already stored in other timesheets
-    const combos = finalRows
-      .filter((row) => row.employeeName && row.date)
-      .map((row) => ({ employeeName: row.employeeName, date: new Date(row.date) }));
+    const employeeNamesForValidation = [...new Set(finalRows.map((r) => r.employeeName))];
 
-    if (combos.length) {
-      const conflicts = await prisma.timesheetRow.findMany({
-        where: {
-          timesheetId: { not: id },
-          OR: combos.map((c) => ({ employeeName: c.employeeName, date: c.date })),
-        },
-        select: { employeeName: true, date: true },
-      });
+    // Check existing dept and duplicate dates in other timesheets
+    const conflicts = await prisma.timesheetRow.findMany({
+      where: {
+        timesheetId: { not: id },
+        OR: finalRows
+          .filter((row) => row.employeeName && row.date)
+          .map((row) => ({ employeeName: row.employeeName, date: new Date(row.date) })),
+      },
+      select: { employeeName: true, date: true },
+    });
 
-      if (conflicts.length) {
-        const details = conflicts
-          .map((r) => `${r.employeeName} on ${r.date.toISOString().slice(0, 10)}`)
-          .join(', ');
-        return NextResponse.json(
-          { ok: false, error: `Duplicate dates already exist for this employee: ${details}. Remove conflicts before saving.` },
-          { status: 400 }
-        );
+    if (conflicts.length) {
+      const details = conflicts
+        .map((r) => `${r.employeeName} on ${r.date.toISOString().slice(0, 10)}`)
+        .join(', ');
+      return NextResponse.json(
+        { ok: false, error: `Duplicate dates already exist for this employee: ${details}. Remove conflicts before saving.` },
+        { status: 400 }
+      );
+    }
+
+    const existingRows = await prisma.timesheetRow.findMany({
+      where: { employeeName: { in: employeeNamesForValidation } },
+      select: { employeeName: true, dept: true },
+    });
+
+    const existingDeptMap = new Map<string, string>();
+    existingRows.forEach((row) => {
+      if (row.dept && !existingDeptMap.has(row.employeeName)) {
+        existingDeptMap.set(row.employeeName, row.dept);
       }
+    });
+
+    finalRows.forEach((row) => {
+      const existingDept = existingDeptMap.get(row.employeeName);
+      if (existingDept && row.dept && row.dept.trim().toLowerCase() !== existingDept.trim().toLowerCase()) {
+        errors.push(`Department mismatch for ${row.employeeName}. Existing: ${existingDept}`);
+      }
+      if (existingDept && (!row.dept || !row.dept.trim())) {
+        row.dept = existingDept;
+      }
+    });
+
+    if (errors.length) {
+      return NextResponse.json({ ok: false, error: Array.from(new Set(errors)).join(' ') }, { status: 400 });
     }
 
     const startDate = new Date(Math.min(...dateList.map((d) => d.getTime())));

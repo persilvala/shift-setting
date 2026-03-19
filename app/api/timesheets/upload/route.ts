@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { parseExcelTimesheet } from '@/lib/timesheetParser';
 import type { ParsedTimesheetRow, AttendanceStatus } from '@/lib/types';
+import { prisma } from '@/lib/db';
 import * as XLSX from 'xlsx';
 
 export const runtime = 'nodejs';
@@ -102,6 +103,26 @@ export async function POST(request: Request) {
 
     const dedupedRows = Array.from(dedupMap.values());
 
+    // Attach existing dept from DB if present
+    const names = Array.from(new Set(dedupedRows.map((r) => r.employeeName).filter(Boolean)));
+    let deptMap = new Map<string, string | null>();
+    if (names.length) {
+      const existingRows = await prisma.timesheetRow.findMany({
+        where: { employeeName: { in: names } },
+        select: { employeeName: true, dept: true },
+      });
+      deptMap = new Map(
+        existingRows
+          .filter((r) => r.dept)
+          .map((r) => [r.employeeName, r.dept as string])
+      );
+    }
+
+    const decoratedRows = dedupedRows.map((row) => {
+      const existingDept = deptMap.get(row.employeeName);
+      return existingDept ? { ...row, dept: existingDept } : row;
+    });
+
     const dateValues = dedupedRows
       .map((row) => row.date ? new Date(row.date) : null)
       .filter((d): d is Date => Boolean(d) && !Number.isNaN(d!.getTime()));
@@ -116,7 +137,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ok: true,
       format: result.format,
-      rows: dedupedRows,
+      rows: decoratedRows,
       warnings: result.warnings,
       startDate: result.startDate ?? startDateFromRows?.toISOString().slice(0, 10),
       endDate: result.endDate ?? endDateFromRows?.toISOString().slice(0, 10),
