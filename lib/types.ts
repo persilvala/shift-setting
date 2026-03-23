@@ -134,3 +134,19 @@ export type SavedPayroll = {
   generatedAt: string;
   _count: { entries: number };
 };
+
+export type TimesheetHistoryItem = {
+  id: string;
+  startDate: string;
+  endDate: string;
+  uploadedAt: string;
+  rowCount: number;
+  rows: ParsedTimesheetRow[];
+};
+
+export type HistoryPagination = {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+};

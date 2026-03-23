@@ -174,12 +174,34 @@ export default function PayrollPage() {
     }
   }, []);
 
+  const fetchLatestTimesheet = useCallback(async () => {
+    try {
+      const response = await fetch("/api/timesheets/latest");
+      const data = await response.json();
+      if (data.ok && data.rows && data.rows.length > 0) {
+        setTimesheetData(data.rows);
+        if (data.timesheet) {
+          setTimesheetMeta({
+            format: data.timesheet.format,
+            timesheetId: data.timesheet.id,
+            startDate: data.timesheet.startDate,
+            endDate: data.timesheet.endDate,
+          });
+        }
+      }
+    } catch (err) {
+      console.error("Failed to fetch latest timesheet:", err);
+    }
+  }, []);
+
   useEffect(() => {
     const stored = sessionStorage.getItem("timesheetData");
     if (stored) {
       try {
         const parsed = JSON.parse(stored) as ParsedTimesheetRow[];
-        setTimesheetData(parsed);
+        if (parsed.length > 0) {
+          setTimesheetData(parsed);
+        }
       } catch {
         setTimesheetData([]);
       }
@@ -189,15 +211,18 @@ export default function PayrollPage() {
     if (metaRaw) {
       try {
         const parsedMeta = JSON.parse(metaRaw) as TimesheetMeta;
-        setTimesheetMeta(parsedMeta);
+        if (parsedMeta && Object.keys(parsedMeta).length > 0) {
+          setTimesheetMeta(parsedMeta);
+        }
       } catch {
         setTimesheetMeta(null);
       }
     }
 
+    fetchLatestTimesheet();
     fetchSavedPayrolls();
     fetchEmployees();
-  }, [fetchEmployees]);
+  }, [fetchEmployees, fetchLatestTimesheet]);
 
   const fetchSavedPayrolls = async () => {
     try {

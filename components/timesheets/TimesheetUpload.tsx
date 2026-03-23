@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { ParsedTimesheetRow } from "@/lib/types";
+import type { ParsedTimesheetRow, TimesheetMeta } from "@/lib/types";
 import { PageHeader } from "@/components/PageHeader";
 
 type UploadSuccess = {
@@ -48,6 +48,22 @@ type TimesheetLoadResponse = {
   ok: boolean;
   rows?: ParsedTimesheetRow[];
   timesheet?: { startDate: string; endDate: string; uploadedAt: string; id: string; format?: string } | null;
+};
+
+type TimesheetHistoryItem = {
+  id: string;
+  startDate: string;
+  endDate: string;
+  uploadedAt: string;
+  rowCount: number;
+  rows: ParsedTimesheetRow[];
+};
+
+type HistoryPagination = {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
 };
 
 const createBlankManualRow = (): ManualRow => ({
@@ -106,6 +122,9 @@ export function TimesheetUpload() {
   const [employees, setEmployees] = useState<EmployeeSummary[]>([]);
   const [loadingEmployees, setLoadingEmployees] = useState(false);
   const [activeTimesheetId, setActiveTimesheetId] = useState<string | null>(null);
+  const [timesheetHistory, setTimesheetHistory] = useState<TimesheetHistoryItem[]>([]);
+  const [historyPagination, setHistoryPagination] = useState<HistoryPagination>({ page: 1, limit: 5, total: 0, totalPages: 1 });
+  const [selectedTimesheetId, setSelectedTimesheetId] = useState<string | null>(null);
 
   const hydrateFromServer = (payload: TimesheetPayload) => {
     const rows = payload.rows ?? [];
@@ -133,33 +152,68 @@ export function TimesheetUpload() {
     }
   };
 
-  const loadEmployeeRows = async (name: string, employeeId?: string | null) => {
+  const loadEmployeeRows = async (name: string, employeeId?: string | null, page = 1) => {
     try {
       setLoadingRows(true);
       const params = new URLSearchParams();
       if (employeeId) params.set("employeeId", employeeId);
       else params.set("employeeName", name);
+      params.set("page", page.toString());
+      params.set("limit", "5");
       const response = await fetch(`/api/timesheets/employee-rows?${params.toString()}`);
       if (!response.ok) return;
       const data = await response.json();
       if (!data.ok) return;
-      const rows = (data.rows ?? []) as ParsedTimesheetRow[];
-      if (rows.length) {
-        setManualRows(rows.map(mapParsedToManualRow));
+
+      const timesheets = (data.timesheets ?? []) as TimesheetHistoryItem[];
+      const pagination = data.pagination as HistoryPagination;
+
+      setTimesheetHistory(timesheets);
+      setHistoryPagination(pagination);
+
+      if (timesheets.length > 0) {
+        const firstTimesheet = timesheets[0];
+        if (!selectedTimesheetId || !timesheets.find(t => t.id === selectedTimesheetId)) {
+          setSelectedTimesheetId(firstTimesheet.id);
+        }
+        const selected = timesheets.find(t => t.id === selectedTimesheetId) ?? timesheets[0];
+        setManualRows(selected.rows.map(mapParsedToManualRow));
+        setStartDate(selected.startDate ?? null);
+        setEndDate(selected.endDate ?? null);
+        setBulkDept(selected.rows[0]?.dept ?? "");
+        setBulkName(name);
+        setActiveTimesheetId(selected.id);
       } else {
         const seeded = Array.from({ length: 20 }, () => ({ ...createBlankManualRow(), employeeName: name }));
         setManualRows(seeded);
+        setStartDate(null);
+        setEndDate(null);
+        setBulkDept("");
+        setBulkName(name);
+        setActiveTimesheetId(null);
       }
-      setStartDate(data.timesheet?.startDate ?? null);
-      setEndDate(data.timesheet?.endDate ?? null);
-      setBulkDept(rows[0]?.dept ?? "");
-      setBulkName(name);
-      setActiveTimesheetId(data.timesheet?.id ?? null);
     } catch (err) {
       console.error("Failed to load employee rows", err);
     } finally {
       setLoadingRows(false);
     }
+  };
+
+  const selectTimesheet = (timesheetId: string) => {
+    setSelectedTimesheetId(timesheetId);
+    const timesheet = timesheetHistory.find((t) => t.id === timesheetId);
+    if (timesheet) {
+      setManualRows(timesheet.rows.map(mapParsedToManualRow));
+      setStartDate(timesheet.startDate ?? null);
+      setEndDate(timesheet.endDate ?? null);
+      setActiveTimesheetId(timesheetId);
+    }
+  };
+
+  const handleHistoryPageChange = (newPage: number) => {
+    if (newPage < 1 || newPage > historyPagination.totalPages) return;
+    setHistoryPagination((prev) => ({ ...prev, page: newPage }));
+    loadEmployeeRows(effectiveEmployee, undefined, newPage);
   };
 
   const updateTimesheetRows = async (rows: ParsedTimesheetRow[]) => {
@@ -322,8 +376,16 @@ export function TimesheetUpload() {
     if (!effectiveEmployee) return;
     const key = effectiveEmployee.toLowerCase();
     const found = employees.find((emp) => emp.employeeName.toLowerCase() === key);
-    loadEmployeeRows(effectiveEmployee, found?.id);
-  }, [entryMode, effectiveEmployee, employees]);
+    loadEmployeeRows(effectiveEmployee, found?.id, historyPagination.page);
+  }, [entryMode, effectiveEmployee, employees, historyPagination.page]);
+
+  useEffect(() => {
+    if (timesheetHistory.length === 0) return;
+    const selectedExists = timesheetHistory.find((t) => t.id === selectedTimesheetId);
+    if (!selectedExists) {
+      selectTimesheet(timesheetHistory[0].id);
+    }
+  }, [timesheetHistory, selectedTimesheetId]);
 
   useEffect(() => {
     if (entryMode !== "manual") return;
@@ -363,6 +425,23 @@ export function TimesheetUpload() {
     if (entryMode === "manual") {
       const ok = await persistManualRows(manualRows);
       if (!ok) return;
+      const activeRows = manualRows.filter((row) => !row.isSoftDeleted);
+      const payloadRows: ParsedTimesheetRow[] = activeRows.map((row, idx) => {
+        const status = row.attendanceStatus ?? "full_day";
+        return {
+          employeeName: row.employeeName,
+          dept: row.dept ?? null,
+          date: row.date,
+          timeIn: status === "absent" ? null : row.timeIn ?? null,
+          timeOut: status === "absent" ? null : row.timeOut ?? null,
+          totalHours: status === "absent" ? null : row.totalHours,
+          attendanceStatus: status,
+          issues: [],
+          sourceLine: idx + 1,
+        };
+      });
+      sessionStorage.setItem("timesheetData", JSON.stringify(payloadRows));
+      sessionStorage.setItem("timesheetMeta", JSON.stringify({} satisfies TimesheetMeta));
       router.push("/admin/payroll");
       return;
     }
@@ -371,11 +450,17 @@ export function TimesheetUpload() {
       setError("Upload and parse a timesheet first.");
       return;
     }
-    // For upload flow, ensure edits are stored before moving on
     if (activeTimesheetId) {
       const ok = await updateTimesheetRows(result.rows);
       if (!ok) return;
     }
+    sessionStorage.setItem("timesheetData", JSON.stringify(result.rows));
+    sessionStorage.setItem("timesheetMeta", JSON.stringify({
+      format: result.format === "manual" ? undefined : result.format,
+      timesheetId: result.timesheetId,
+      startDate: result.startDate,
+      endDate: result.endDate,
+    } satisfies TimesheetMeta));
     router.push("/admin/payroll");
   };
 
@@ -998,6 +1083,72 @@ export function TimesheetUpload() {
                 {entryMode === "upload" ? null : null}
               </div>
             </div>
+
+            {entryMode === "manual" && effectiveEmployee && timesheetHistory.length > 0 ? (
+              <div className="mb-6">
+                <div className="mb-3 flex items-center justify-between">
+                  <div>
+                    <h4 className="text-sm font-semibold text-[var(--foreground)]">Timesheet History</h4>
+                    <p className="text-xs text-[var(--muted)]">
+                      Showing {timesheetHistory.length} of {historyPagination.total} uploads
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleHistoryPageChange(historyPagination.page - 1)}
+                      disabled={historyPagination.page <= 1}
+                      className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-semibold text-[var(--muted)] transition hover:bg-[var(--surface)] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Prev
+                    </button>
+                    <span className="text-xs font-semibold text-[var(--muted)]">
+                      Page {historyPagination.page} of {historyPagination.totalPages}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleHistoryPageChange(historyPagination.page + 1)}
+                      disabled={historyPagination.page >= historyPagination.totalPages}
+                      className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-semibold text-[var(--muted)] transition hover:bg-[var(--surface)] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                  {timesheetHistory.map((timesheet) => (
+                    <button
+                      key={timesheet.id}
+                      type="button"
+                      onClick={() => selectTimesheet(timesheet.id)}
+                      className={`rounded-xl border p-4 text-left transition hover:scale-[1.01] ${
+                        selectedTimesheetId === timesheet.id
+                          ? "border-[var(--accent)] bg-[var(--accent)]/5 shadow-[0_4px_20px_rgba(47,109,246,0.12)]"
+                          : "border-[var(--border)] bg-white hover:border-[var(--accent)]/50"
+                      }`}
+                    >
+                      <div className="mb-2 flex items-center gap-2">
+                        <span className="text-lg">
+                          {selectedTimesheetId === timesheet.id ? "✓" : "📄"}
+                        </span>
+                        <span className="text-xs font-semibold uppercase tracking-[0.1em] text-[var(--accent)]">
+                          {selectedTimesheetId === timesheet.id ? "Selected" : "Timesheet"}
+                        </span>
+                      </div>
+                      <p className="mb-1 text-sm font-semibold text-[var(--foreground)]">
+                        {new Date(timesheet.uploadedAt).toLocaleDateString()}
+                      </p>
+                      <p className="text-xs text-[var(--muted)]">
+                        {timesheet.startDate} to {timesheet.endDate}
+                      </p>
+                      <p className="mt-2 text-xs font-semibold text-[var(--muted)]">
+                        {timesheet.rowCount} row(s)
+                      </p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
 
             {entryMode === "manual" && effectiveEmployee ? (
               <div className="grid gap-3 md:grid-cols-2">
