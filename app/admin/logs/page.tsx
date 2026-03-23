@@ -54,7 +54,7 @@ export default function AdminLogsPage() {
       <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-8 px-4 pt-6 sm:px-6 md:pt-10 lg:px-10">
         <header className="space-y-2">
           <PageHeader>Admin logs</PageHeader>
-          <h1 className="text-3xl font-semibold leading-tight text-[var(--foreground)] md:text-4xl">Audit important actions.</h1>
+          <h1 className="text-3xl font-semibold leading-tight text-[var(--foreground)] md:text-4xl">Audit important actions</h1>
           <p className="text-sm text-[var(--muted)]">Uploads, payroll confirmations, failed validations, and cancellations are captured here.</p>
         </header>
 

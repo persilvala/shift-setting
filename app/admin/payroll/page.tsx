@@ -863,7 +863,7 @@ export default function PayrollPage() {
         <header className="space-y-2">
           <PageHeader>Payroll</PageHeader>
           <h1 className="text-3xl font-semibold leading-tight text-[var(--foreground)] md:text-4xl">
-            Generate payroll from pending timesheets.
+            Generate payroll from pending timesheets
           </h1>
         </header>
 

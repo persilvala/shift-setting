@@ -140,9 +140,6 @@ export default function EmployeesPage() {
           <h1 className="text-3xl font-semibold leading-tight text-[var(--foreground)] md:text-4xl">
             Manage your team
           </h1>
-          <p className="text-sm text-[var(--muted)]">
-            Add employees and set their base pay per day rates.
-          </p>
         </header>
 
         {error && (
