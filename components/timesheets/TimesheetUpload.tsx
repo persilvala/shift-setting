@@ -799,11 +799,7 @@ export function TimesheetUpload() {
           <h1 className="text-3xl font-semibold leading-tight text-[var(--foreground)] md:text-4xl">
             {entryMode === "upload" ? "Upload timesheets" : "Add timesheets manually"}
           </h1>
-          <p className="text-sm text-[var(--muted)]">
-            {entryMode === "upload"
-              ? "Import a file and tidy up rows before saving."
-              : "Add and edit rows directly in the table for each employee."}
-          </p>
+
           <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-white px-1 py-1 text-sm font-semibold w-fit">
             <button
               type="button"
@@ -836,7 +832,6 @@ export function TimesheetUpload() {
           <div className="space-y-1">
             <p className="text-xs uppercase tracking-[0.26em] text-[var(--muted)]">Employees</p>
             <h2 className="text-xl font-semibold text-[var(--foreground)]">Employees from upload or manual entry</h2>
-            <p className="text-sm text-[var(--muted)]">Handle up to ~30 employees. Click a row to open their timesheet; “Add employee” drops in starter rows when none exist.</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             {entryMode === "manual" ? (
@@ -918,7 +913,7 @@ export function TimesheetUpload() {
             <div>
               <p className="text-xs uppercase tracking-[0.26em] text-[var(--muted)]">Upload</p>
               <h2 className="text-xl font-semibold text-[var(--foreground)]">Upload an Excel, CSV, or PDF</h2>
-              <p className="text-sm text-[var(--muted)]">Need Name and Date. Time In/Out and Hours are optional.</p>
+
             </div>
             <span className="rounded-full bg-[var(--accent)]/10 px-3 py-1 text-xs font-semibold text-[var(--accent)]">Parser ready</span>
           </div>

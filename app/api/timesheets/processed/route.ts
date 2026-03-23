@@ -31,13 +31,21 @@ export async function GET(request: Request) {
 
     const processedTimesheets = await prisma.timesheet.findMany({
       where: whereClause,
-      include: {
+      select: {
+        id: true,
+        fileName: true,
+        format: true,
+        entrySource: true,
+        startDate: true,
+        endDate: true,
+        totalRows: true,
+        uploadedAt: true,
         payrolls: {
           select: {
             id: true,
             totalNetPay: true,
             basePayPerDay: true,
-            createdAt: true,
+            generatedAt: true,
           },
         },
         _count: {
@@ -57,11 +65,11 @@ export async function GET(request: Request) {
       uploadedAt: ts.uploadedAt.toISOString(),
       totalRows: ts.totalRows,
       employeeCount: ts.totalRows,
-      payrolls: ts.payrolls.map((p: { id: string; totalNetPay: number; basePayPerDay: number; createdAt: Date }) => ({
+      payrolls: ts.payrolls.map((p) => ({
         id: p.id,
         totalNetPay: p.totalNetPay,
         basePayPerDay: p.basePayPerDay,
-        createdAt: p.createdAt.toISOString(),
+        generatedAt: p.generatedAt.toISOString(),
       })),
     }));
 

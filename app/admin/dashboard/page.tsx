@@ -333,26 +333,9 @@ export default function DashboardPage() {
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div className="space-y-2">
               <h1 className="text-3xl font-semibold leading-tight text-[var(--foreground)] md:text-4xl">
-                Timesheet-backed attendance and payroll snapshot.
+                Timesheet-backed attendance and payroll snapshot
               </h1>
-              <p className="max-w-3xl text-sm text-[var(--muted)]">
-                View totals from all uploaded timesheets, apply filters, and jump to upload or payroll when you need to refresh or compute.
-              </p>
-              <div className="flex items-center gap-2 text-xs">
-                <span className="text-[var(--muted)]">
-                  Loaded rows: {activeRows.length || 0} {activeRows.length ? dataSource === "database" ? "(from database)" : "(from session)" : "— upload to populate"}
-                </span>
-                {dataSource === "database" && (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">
-                    DB
-                  </span>
-                )}
-                {refreshing && (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">
-                    Refreshing...
-                  </span>
-                )}
-              </div>
+
             </div>
             <button
               onClick={refreshData}
@@ -373,7 +356,7 @@ export default function DashboardPage() {
           <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
             <div className="space-y-2">
               <p className="text-xs uppercase tracking-[0.26em] text-[var(--muted)]">Filters</p>
-              <h2 className="text-xl font-semibold text-[var(--foreground)]">Slice by employee, department, and date range</h2>
+
             </div>
             <button
               type="button"
@@ -464,8 +447,6 @@ export default function DashboardPage() {
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-xs uppercase tracking-[0.26em] text-[var(--muted)]">Payroll visibility</p>
-              <h3 className="text-xl font-semibold text-[var(--foreground)]">Only shown after confirmed generation</h3>
-              <p className="text-sm text-[var(--muted)]">Payroll totals stay hidden until a generation is confirmed on the Payroll page.</p>
             </div>
             <span className={`rounded-full px-3 py-1 text-xs font-semibold ${payrollSummary ? "border border-emerald-200 bg-emerald-50 text-emerald-700" : "border border-amber-200 bg-amber-50 text-amber-700"}`}>
               {payrollSummary ? "Confirmed" : "Awaiting confirmation"}
@@ -503,8 +484,6 @@ export default function DashboardPage() {
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-xs uppercase tracking-[0.26em] text-[var(--muted)]">Attendance summary</p>
-              <h3 className="text-xl font-semibold text-[var(--foreground)]">Per employee (filtered)</h3>
-              <p className="text-sm text-[var(--muted)]">Present days are unique dates in the parsed timesheet. Leave/absence use provided fields when available.</p>
             </div>
             <span className="rounded-full border border-[var(--border)] bg-white px-3 py-1 text-xs font-semibold text-[var(--muted)]">Employees: {aggregates.employees}</span>
           </div>

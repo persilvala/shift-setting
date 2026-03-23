@@ -9,7 +9,15 @@ export async function GET() {
           none: {},
         },
       },
-      include: {
+      select: {
+        id: true,
+        fileName: true,
+        format: true,
+        entrySource: true,
+        startDate: true,
+        endDate: true,
+        totalRows: true,
+        uploadedAt: true,
         _count: {
           select: { rows: true },
         },
