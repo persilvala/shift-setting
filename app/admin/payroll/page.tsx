@@ -140,10 +140,8 @@ export default function PayrollPage() {
     aggregated: ReturnType<typeof buildAttendanceData>;
     employees: number;
     shifts: number;
-    key: string;
   } | null>(null);
   const [showPayrollConfirm, setShowPayrollConfirm] = useState(false);
-  const [locks, setLocks] = useState<string[]>([]);
 
   const [editModal, setEditModal] = useState<{
     employeeId: string;
@@ -217,53 +215,9 @@ export default function PayrollPage() {
     }
   }, []);
 
-  const fetchLatestTimesheet = useCallback(async () => {
-    try {
-      const response = await fetch("/api/timesheets/latest");
-      const data = await response.json();
-      if (data.ok && data.rows && data.rows.length > 0) {
-        setTimesheetData(data.rows);
-        if (data.timesheet) {
-          setTimesheetMeta({
-            format: data.timesheet.format,
-            timesheetId: data.timesheet.id,
-            startDate: data.timesheet.startDate,
-            endDate: data.timesheet.endDate,
-          });
-        }
-      }
-    } catch (err) {
-      console.error("Failed to fetch latest timesheet:", err);
-    }
-  }, []);
-
   useEffect(() => {
     const fetchPendingTimesheets = async () => {
       try {
-<<<<<<< HEAD
-        const parsed = JSON.parse(stored) as ParsedTimesheetRow[];
-        if (parsed.length > 0) {
-          setTimesheetData(parsed);
-        }
-      } catch {
-        setTimesheetData([]);
-      }
-    }
-
-    const metaRaw = sessionStorage.getItem("timesheetMeta");
-    if (metaRaw) {
-      try {
-        const parsedMeta = JSON.parse(metaRaw) as TimesheetMeta;
-        if (parsedMeta && Object.keys(parsedMeta).length > 0) {
-          setTimesheetMeta(parsedMeta);
-        }
-      } catch {
-        setTimesheetMeta(null);
-      }
-    }
-
-    fetchLatestTimesheet();
-=======
         setLoadingPending(true);
         const response = await fetch("/api/timesheets/pending");
         const data = await response.json();
@@ -278,10 +232,9 @@ export default function PayrollPage() {
     };
 
     fetchPendingTimesheets();
->>>>>>> b77d16f (payroll refactor)
     fetchSavedPayrolls();
     fetchEmployees();
-  }, [fetchEmployees, fetchLatestTimesheet]);
+  }, [fetchEmployees]);
 
   useEffect(() => {
     const fetchProcessedTimesheets = async () => {
@@ -344,18 +297,6 @@ export default function PayrollPage() {
     if (!payrollData) return 0;
     return payrollData.payroll.reduce((sum, entry) => sum + entry.netPay, 0);
   }, [payrollData]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const storedLocks = localStorage.getItem("payroll-locks");
-    if (storedLocks) {
-      try {
-        setLocks(JSON.parse(storedLocks));
-      } catch {
-        setLocks([]);
-      }
-    }
-  }, []);
 
   useEffect(() => {
     setPayrollPage(1);
@@ -432,7 +373,7 @@ export default function PayrollPage() {
     [employees, defaultBasePayPerDay],
   );
 
-  const handleGeneratePayroll = () => {
+  const handleGeneratePayroll = async () => {
     setError(null);
     setSuccess(null);
     setMissingBasePayWarning([]);
@@ -499,15 +440,22 @@ export default function PayrollPage() {
       return;
     }
 
-    const lockKey = `${selectedUser.trim().toLowerCase() || "all"}|${startDate}|${endDate}`;
-    if (locks.includes(lockKey)) {
-      setError("Payroll already generated for this user and date range.");
-      addAdminLog({
-        action: "Payroll validation",
-        status: "Failed",
-        description: "Duplicate payroll prevented.",
-      });
-      return;
+    if (selectedTimesheetId) {
+      try {
+        const lockResponse = await fetch(`/api/payroll/check-duplicate?timesheetId=${selectedTimesheetId}`);
+        const lockData = await lockResponse.json();
+        if (lockData.exists) {
+          setError("Payroll already generated for this timesheet.");
+          addAdminLog({
+            action: "Payroll validation",
+            status: "Failed",
+            description: "Duplicate payroll prevented via API.",
+          });
+          return;
+        }
+      } catch {
+        console.error("Failed to check payroll duplicate");
+      }
     }
 
     const aggregated = buildAttendanceData(scopedRows);
@@ -537,7 +485,6 @@ export default function PayrollPage() {
       aggregated,
       employees: aggregated.length,
       shifts: scopedRows.length,
-      key: lockKey,
     });
     setShowPayrollConfirm(true);
     addAdminLog({
@@ -589,10 +536,7 @@ export default function PayrollPage() {
         description: `Generated payroll for ${pendingPayroll.employees} employee(s) covering ${pendingPayroll.shifts} shifts`,
       });
 
-      const nextLocks = Array.from(new Set([...locks, pendingPayroll.key]));
-      setLocks(nextLocks);
       if (typeof window !== "undefined") {
-        localStorage.setItem("payroll-locks", JSON.stringify(nextLocks));
         localStorage.setItem(
           "lastPayrollConfirmation",
           JSON.stringify({
@@ -668,6 +612,9 @@ export default function PayrollPage() {
               employeeName: emp.employeeName,
               timesheetRowId: "",
               basePayPerDay: emp.basePayPerDay,
+              attendanceDays: emp.attendanceDays,
+              halfDays: emp.halfDays,
+              absentDays: emp.absentDays,
               basePay: emp.basePay,
               addedValue: emp.addedValue,
               subtractedValue: emp.subtractedValue,
@@ -680,6 +627,9 @@ export default function PayrollPage() {
           employeeName: emp.employeeName,
           timesheetRowId: rowId,
           basePayPerDay: emp.basePayPerDay,
+          attendanceDays: emp.attendanceDays,
+          halfDays: emp.halfDays,
+          absentDays: emp.absentDays,
           basePay: emp.basePay / emp.timesheetRowIds.length,
           addedValue: emp.addedValue / emp.timesheetRowIds.length,
           subtractedValue: emp.subtractedValue / emp.timesheetRowIds.length,

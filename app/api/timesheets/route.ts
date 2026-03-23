@@ -32,9 +32,9 @@ export async function GET() {
   }
 }
 
-type ManualRequestRow = {
+type ManualInputRow = {
   employeeName: string;
-  dept: string;
+  dept?: string | null;
   date: string;
   timeIn?: string | null;
   timeOut?: string | null;
@@ -42,39 +42,17 @@ type ManualRequestRow = {
   attendanceStatus?: AttendanceStatus;
 };
 
-type TimesheetCreateOptions = {
+type ManualOptions = {
   fileName?: string | null;
   format?: string | null;
   entrySource?: string | null;
 };
 
-function mapRowResponse(row: { [key: string]: any }) {
-  return {
-    id: row.id,
-    employeeName: row.employeeName,
-    date:
-      row.date instanceof Date ? row.date.toISOString().slice(0, 10) : row.date,
-    timeIn: row.beforeNoonIn ?? null,
-    timeOut: row.beforeNoonOut ?? null,
-    totalHours: row.totalHours ?? row.workHours ?? null,
-    issues: [],
-    sourceLine: 0,
-    dept: row.dept ?? null,
-    userId: row.userId ?? null,
-    employeeId: row.employeeId ?? undefined,
-    attendanceStatus: (row.attendanceStatus as AttendanceStatus) ?? "full_day",
-  };
-}
-
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const rows = (body?.rows ?? []) as any[];
-    const options = (body ?? {}) as {
-      fileName?: string | null;
-      format?: string | null;
-      entrySource?: string | null;
-    };
+    const rows = (body?.rows ?? []) as ManualInputRow[];
+    const options = (body ?? {}) as ManualOptions;
 
     const result = await upsertManualTimesheet({
       rows,

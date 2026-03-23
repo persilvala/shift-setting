@@ -6,6 +6,9 @@ type PayrollEntryData = {
   employeeName: string;
   timesheetRowId: string;
   basePayPerDay: number | null;
+  attendanceDays: number;
+  halfDays: number;
+  absentDays: number;
   basePay: number;
   addedValue: number;
   subtractedValue: number;
@@ -36,6 +39,9 @@ export async function POST(request: Request) {
     const entriesToCreate: {
       employeeId: string;
       timesheetRowId: string;
+      attendanceDays: number;
+      halfDays: number;
+      absentDays: number;
       basePay: number;
       addedValue: number;
       subtractedValue: number;
@@ -63,6 +69,9 @@ export async function POST(request: Request) {
         entriesToCreate.push({
           employeeId: employee.id,
           timesheetRowId: entry.timesheetRowId,
+          attendanceDays: entry.attendanceDays,
+          halfDays: entry.halfDays,
+          absentDays: entry.absentDays,
           basePay: entry.basePay,
           addedValue: entry.addedValue,
           subtractedValue: entry.subtractedValue,

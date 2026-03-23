@@ -145,6 +145,7 @@ export async function createItem(data: ItemData): Promise<{ success: boolean; er
 │   │   ├── auth/          # NextAuth handlers
 │   │   ├── employees/     # Employee CRUD
 │   │   ├── payroll/       # Payroll operations
+│   │   │   └── check-duplicate/  # Duplicate payroll check
 │   │   ├── timesheets/    # Timesheet upload/parsing
 │   │   └── ...
 │   ├── admin/             # Admin pages (protected)
@@ -167,6 +168,7 @@ export async function createItem(data: ItemData): Promise<{ success: boolean; er
 │   ├── types.ts          # Shared TypeScript types
 │   ├── attendanceCalculator.ts
 │   ├── excelParser.ts
+│   ├── manualTimesheet.ts # Manual timesheet upsert logic
 │   └── timesheetParser.ts
 ├── prisma/                # Schema, migrations, seed
 ├── __tests__/             # Test files (Jest with ts-jest)
@@ -187,10 +189,31 @@ Required in `.env`:
 ## Database Schema Summary
 - **Admin** - User accounts with password hash
 - **Employee** - Employee records with base pay per day
-- **Timesheet** - Uploaded timesheet files with date ranges
-- **TimesheetRow** - Individual rows from timesheet uploads
-- **Payroll** - Generated payroll periods
-- **PayrollEntry** - Individual employee entries in payroll
+- **Timesheet** - Uploaded timesheet files with date ranges (linked to Payroll via timesheetId)
+- **TimesheetRow** - Individual rows from timesheet uploads (unique constraint on employeeId + date)
+- **Payroll** - Generated payroll periods (linked to Timesheet via timesheetId)
+- **PayrollEntry** - Individual employee entries in payroll with attendance tracking
+
+## Key Workflows
+
+### Timesheet Upload Flow
+1. Upload xlsx/csv/pdf file via `/api/timesheets/upload`
+2. Parse and merge with existing database rows
+3. Save to database via `POST /api/timesheets` or `PUT /api/timesheets/[id]`
+4. Timesheets have `pending`/`processed` status (based on whether payroll has been generated)
+
+### Payroll Generation Flow
+1. Select a pending timesheet from the list
+2. Enter date range and filter options
+3. Generate payroll (validates, aggregates attendance data)
+4. Save to database via `POST /api/payroll`
+5. Timesheet is marked as processed (can no longer generate duplicate payroll)
+6. View saved payrolls from the database index
+
+### Duplicate Prevention
+- Uses database-driven check via `GET /api/payroll/check-duplicate?timesheetId=xxx`
+- Prevents generating payroll for the same timesheet twice
+- Does NOT use localStorage for locks (previously deprecated approach)
 
 ## Testing Notes
 - Tests use Jest with ts-jest preset

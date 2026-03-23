@@ -1,12 +1,26 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import type { AttendanceStatus } from '@/lib/types';
+import type { AttendanceStatus, ParsedTimesheetRow } from '@/lib/types';
 
-function mapRow(row: { [key: string]: any }) {
+type RowForMap = {
+  id: string;
+  employeeName: string;
+  date: Date;
+  beforeNoonIn: string | null;
+  beforeNoonOut: string | null;
+  totalHours: number | null;
+  workHours: number | null;
+  dept: string | null;
+  userId: string | null;
+  employeeId: string | null;
+  attendanceStatus: string;
+};
+
+function mapRow(row: RowForMap): ParsedTimesheetRow {
   return {
     id: row.id,
     employeeName: row.employeeName,
-    date: row.date instanceof Date ? row.date.toISOString().slice(0, 10) : row.date,
+    date: row.date instanceof Date ? row.date.toISOString().slice(0, 10) : String(row.date),
     timeIn: row.beforeNoonIn ?? null,
     timeOut: row.beforeNoonOut ?? null,
     totalHours: row.totalHours ?? row.workHours ?? null,

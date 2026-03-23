@@ -60,7 +60,6 @@ function normalizeRows(rows: ManualInputRow[]): ValidationResult {
     const status = (raw.attendanceStatus ?? "full_day") as AttendanceStatus;
 
     if (!employeeName) errors.push("Employee name is required for all rows.");
-    if (!dept) errors.push("Department is required for all rows.");
     if (!date) errors.push("Date is required for all rows.");
 
     const parsedDate = date ? new Date(date) : null;
@@ -183,6 +182,7 @@ export async function upsertManualTimesheet(options: {
   manualOptions?: ManualOptions;
 }) {
   const validated = normalizeRows(options.rows ?? []);
+  console.log("[upsertManualTimesheet] Validation result:", validated.ok, "rows:", validated.rows?.length, "errors:", validated.errors);
   if (!validated.ok || !validated.rows || !validated.startDate || !validated.endDate || !validated.employeeNames) {
     return { ok: false as const, status: 400, error: (validated.errors ?? ["Invalid input."]).join(" ") };
   }
@@ -192,8 +192,12 @@ export async function upsertManualTimesheet(options: {
   const startDate = validated.startDate;
   const endDate = validated.endDate;
 
-  const result = await prisma.$transaction(async (tx) => {
+  let result;
+  try {
+    result = await prisma.$transaction(async (tx) => {
+      console.log("[upsertManualTimesheet] Starting transaction, employees:", validated.employeeNames);
     const employeeMap = await ensureEmployees(tx, validated.employeeNames!);
+    console.log("[upsertManualTimesheet] Employee map created, size:", employeeMap.size);
 
     const rowsWithEmployees = rows.map((row) => {
       const emp = employeeMap.get(row.employeeName.toLowerCase());
@@ -229,9 +233,11 @@ export async function upsertManualTimesheet(options: {
     }
 
     const keys = rowsWithEmployees.map((row) => ({ employeeId: row.employeeId ?? "", date: new Date(row.date) }));
+    console.log("[upsertManualTimesheet] Looking up existing rows, keys:", keys.length);
     const existingRows = keys.length
       ? await tx.timesheetRow.findMany({ where: { OR: keys.map((k) => ({ employeeId: k.employeeId as any, date: k.date })) } as any })
       : [];
+    console.log("[upsertManualTimesheet] Found existing rows:", existingRows.length);
 
     const existingMap = new Map<string, (typeof existingRows)[number]>();
     existingRows.forEach((row) => {
@@ -239,6 +245,7 @@ export async function upsertManualTimesheet(options: {
     });
 
     const upserted: (typeof existingRows)[number][] = [];
+    console.log("[upsertManualTimesheet] Rows to process:", rowsWithEmployees.length);
 
     for (const row of rowsWithEmployees) {
       const status = row.attendanceStatus ?? "full_day";
@@ -312,7 +319,11 @@ export async function upsertManualTimesheet(options: {
       endDate: updatedEnd,
       rows: refreshedRows,
     };
-  });
+    });
+  } catch (error) {
+    console.error("[upsertManualTimesheet] Transaction error:", error);
+    throw error;
+  }
 
   if ("error" in result) {
     return { ok: false as const, status: (result as any).status ?? 500, error: (result as any).error };

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import type { PayrollEntry, AttendanceStatus } from "@/lib/types";
+import type { AttendanceStatus } from "@/lib/types";
 
 export type { PayrollEntry } from "@/lib/types";
 
