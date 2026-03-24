@@ -9,17 +9,10 @@ export async function GET() {
           none: {},
         },
       },
-      select: {
-        id: true,
-        fileName: true,
-        format: true,
-        entrySource: true,
-        startDate: true,
-        endDate: true,
-        totalRows: true,
-        uploadedAt: true,
-        _count: {
-          select: { rows: true },
+      include: {
+        rows: {
+          select: { employeeName: true },
+          distinct: ['employeeName'],
         },
       },
       orderBy: { uploadedAt: 'desc' },
@@ -37,7 +30,7 @@ export async function GET() {
       endDate: ts.endDate.toISOString().slice(0, 10),
       uploadedAt: ts.uploadedAt.toISOString(),
       totalRows: ts.totalRows,
-      employeeCount: ts.totalRows,
+      employeeCount: ts.rows.length,
     }));
 
     return NextResponse.json({

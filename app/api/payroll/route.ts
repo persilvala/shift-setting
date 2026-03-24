@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 
 type PayrollEntryData = {
-  employeeId: string;
+  employeeId: string | number;
   employeeName: string;
   timesheetRowId: string;
   basePayPerDay: number | null;
@@ -20,7 +20,7 @@ type SavePayrollRequest = {
   endDate: string;
   basePayPerDay: number;
   payroll: PayrollEntryData[];
-  timesheetId?: string;
+  timesheetId?: string | number;
 };
 
 export async function POST(request: Request) {
@@ -37,8 +37,8 @@ export async function POST(request: Request) {
     const totalNetPay = payroll.reduce((sum, entry) => sum + entry.netPay, 0);
 
     const entriesToCreate: {
-      employeeId: string;
-      timesheetRowId: string;
+      employeeId: number;
+      timesheetRowId: number | null;
       attendanceDays: number;
       halfDays: number;
       absentDays: number;
@@ -49,12 +49,15 @@ export async function POST(request: Request) {
     }[] = [];
 
     for (const entry of payroll) {
-      const employee = await prisma.employee.findFirst({
+      const numericEmpId = typeof entry.employeeId === "string" ? parseInt(entry.employeeId, 10) : entry.employeeId;
+      const numericRowId = entry.timesheetRowId ? (typeof entry.timesheetRowId === "string" ? parseInt(entry.timesheetRowId, 10) : entry.timesheetRowId) : null;
+      
+        const employee = await prisma.employee.findFirst({
         where: {
           OR: [
-            { id: entry.employeeId },
+            Number.isNaN(numericEmpId) ? undefined : { id: numericEmpId },
             { employeeName: entry.employeeName },
-          ],
+          ].filter(Boolean) as any,
         },
       });
 
@@ -67,8 +70,8 @@ export async function POST(request: Request) {
         }
 
         entriesToCreate.push({
-          employeeId: employee.id,
-          timesheetRowId: entry.timesheetRowId,
+          employeeId: Number(employee.id),
+          timesheetRowId: numericRowId,
           attendanceDays: entry.attendanceDays,
           halfDays: entry.halfDays,
           absentDays: entry.absentDays,
@@ -100,20 +103,20 @@ export async function POST(request: Request) {
         endDate: new Date(endDate),
         basePayPerDay,
         totalNetPay,
-        timesheetId,
+        timesheetId: timesheetId ? Number(timesheetId) as any : null,
         entries: {
-          create: entriesToCreate,
+          create: entriesToCreate as any,
         },
       },
       include: {
         entries: true,
       },
-    });
+    }) as any;
 
     console.log("✓ Payroll saved to DB:", {
       id: createdPayroll.id,
       period: `${startDate} to ${endDate}`,
-      entryCount: createdPayroll.entries.length,
+      entryCount: createdPayroll.entries?.length ?? entriesToCreate.length,
       totalNetPay: createdPayroll.totalNetPay,
       generatedAt: createdPayroll.generatedAt,
     });

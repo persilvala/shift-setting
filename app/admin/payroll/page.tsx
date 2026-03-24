@@ -26,7 +26,7 @@ type PayrollEntryRow = {
   subtractedValue: number;
   netPay: number;
   isEdited: boolean;
-  timesheetRowIds: string[];
+  timesheetRowIds: (string | number)[];
 };
 
 type PayrollData = {
@@ -72,18 +72,18 @@ function buildAttendanceData(rows: ParsedTimesheetRow[]) {
     attendanceDays: number;
     halfDays: number;
     absentDays: number;
-    timesheetRowIds: string[];
+    timesheetRowIds: (string | number)[];
   };
 
   const byEmployee = new Map<string, WorkingRow>();
 
   rows.forEach((row) => {
-    const key = row.employeeId || row.employeeName;
+    const key = String(row.employeeId || row.employeeName || "");
     if (!key) return;
 
     if (!byEmployee.has(key)) {
       byEmployee.set(key, {
-        employeeId: row.employeeId || key,
+        employeeId: String(row.employeeId || key),
         employeeName: row.employeeName || "Unnamed",
         attendanceDays: 0,
         halfDays: 0,
@@ -183,9 +183,15 @@ export default function PayrollPage() {
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [editingPayrollId, setEditingPayrollId] = useState<string | null>(null);
 
-  const [pendingTimesheets, setPendingTimesheets] = useState<PendingTimesheet[]>([]);
-  const [selectedTimesheetId, setSelectedTimesheetId] = useState<string | null>(null);
-  const [processedTimesheets, setProcessedTimesheets] = useState<ProcessedTimesheet[]>([]);
+  const [pendingTimesheets, setPendingTimesheets] = useState<
+    PendingTimesheet[]
+  >([]);
+  const [selectedTimesheetId, setSelectedTimesheetId] = useState<string | null>(
+    null,
+  );
+  const [processedTimesheets, setProcessedTimesheets] = useState<
+    ProcessedTimesheet[]
+  >([]);
   const [processedStartDate, setProcessedStartDate] = useState("");
   const [processedEndDate, setProcessedEndDate] = useState("");
   const [loadingPending, setLoadingPending] = useState(false);
@@ -243,7 +249,9 @@ export default function PayrollPage() {
         const params = new URLSearchParams();
         if (processedStartDate) params.append("startDate", processedStartDate);
         if (processedEndDate) params.append("endDate", processedEndDate);
-        const response = await fetch(`/api/timesheets/processed?${params.toString()}`);
+        const response = await fetch(
+          `/api/timesheets/processed?${params.toString()}`,
+        );
         const data = await response.json();
         if (data.timesheets) {
           setProcessedTimesheets(data.timesheets);
@@ -324,7 +332,7 @@ export default function PayrollPage() {
       if (start && d < start) return false;
       if (end && d > end) return false;
       if (scoped) {
-        const key = row.employeeId || row.employeeName || "";
+        const key = String(row.employeeId || row.employeeName || "");
         if (!key) return false;
         if (
           !key.toLowerCase().includes(scoped) &&
@@ -361,9 +369,10 @@ export default function PayrollPage() {
   );
 
   const getEmployeeBasePay = useCallback(
-    (employeeId: string, employeeName: string): number | null => {
+    (employeeId: string | number, employeeName: string): number | null => {
+      const numericId = typeof employeeId === "string" ? parseInt(employeeId, 10) : employeeId;
       const emp = employees.find(
-        (e) => e.id === employeeId || e.employeeName === employeeName,
+        (e) => e.id === numericId || e.employeeName === employeeName,
       );
       if (emp?.basePayPerDay !== null && emp?.basePayPerDay !== undefined) {
         return emp.basePayPerDay;
@@ -425,7 +434,7 @@ export default function PayrollPage() {
     const scoped = selectedUser.trim().toLowerCase();
     const scopedRows = scoped
       ? inRange.filter((row) => {
-          const key = (row.employeeId || row.employeeName || "").toLowerCase();
+          const key = String(row.employeeId || row.employeeName || "").toLowerCase();
           return key.includes(scoped);
         })
       : inRange;
@@ -442,7 +451,9 @@ export default function PayrollPage() {
 
     if (selectedTimesheetId) {
       try {
-        const lockResponse = await fetch(`/api/payroll/check-duplicate?timesheetId=${selectedTimesheetId}`);
+        const lockResponse = await fetch(
+          `/api/payroll/check-duplicate?timesheetId=${selectedTimesheetId}`,
+        );
         const lockData = await lockResponse.json();
         if (lockData.exists) {
           setError("Payroll already generated for this timesheet.");
@@ -686,7 +697,11 @@ export default function PayrollPage() {
       console.log("[Payroll] Pending API response after save:", pendingData);
       if (pendingData.timesheets) {
         setPendingTimesheets(pendingData.timesheets);
-        if (!pendingData.timesheets.find((t: PendingTimesheet) => t.id === selectedTimesheetId)) {
+        if (
+          !pendingData.timesheets.find(
+            (t: PendingTimesheet) => t.id === selectedTimesheetId,
+          )
+        ) {
           setSelectedTimesheetId(null);
           setTimesheetData([]);
           setTimesheetMeta(null);
@@ -697,7 +712,10 @@ export default function PayrollPage() {
 
       const processedResponse = await fetch("/api/timesheets/processed");
       const processedData = await processedResponse.json();
-      console.log("[Payroll] Processed API response after save:", processedData);
+      console.log(
+        "[Payroll] Processed API response after save:",
+        processedData,
+      );
       if (processedData.timesheets) {
         setProcessedTimesheets(processedData.timesheets);
       }
@@ -774,19 +792,22 @@ export default function PayrollPage() {
 
     if (editingEntryId && editingPayrollId) {
       try {
-        const response = await fetch(`/api/payroll/${editingPayrollId}/entries/${editingEntryId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            attendanceDays: editModal.attendanceDays,
-            halfDays: editModal.halfDays,
-            absentDays: editModal.absentDays,
-            basePay: Math.round(newBasePay * 100) / 100,
-            addedValue: editModal.addedValue,
-            subtractedValue: editModal.subtractedValue,
-            netPay: Math.round(newNetPay * 100) / 100,
-          }),
-        });
+        const response = await fetch(
+          `/api/payroll/${editingPayrollId}/entries/${editingEntryId}`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              attendanceDays: editModal.attendanceDays,
+              halfDays: editModal.halfDays,
+              absentDays: editModal.absentDays,
+              basePay: Math.round(newBasePay * 100) / 100,
+              addedValue: editModal.addedValue,
+              subtractedValue: editModal.subtractedValue,
+              netPay: Math.round(newNetPay * 100) / 100,
+            }),
+          },
+        );
 
         if (response.ok) {
           setSelectedPayrollDetail((prev) => {
@@ -905,7 +926,8 @@ export default function PayrollPage() {
         {pendingTimesheets.length === 0 && !selectedTimesheetId && (
           <section className="rounded-3xl border border-[var(--border)] bg-[var(--panel)]/90 p-6 shadow-[0_18px_50px_rgba(16,40,94,0.08)]">
             <p className="text-center text-[var(--muted)]">
-              No pending timesheets. Upload a timesheet on the Timesheets tab first.
+              No pending timesheets. Upload a timesheet on the Timesheets tab
+              first.
             </p>
           </section>
         )}
@@ -927,8 +949,8 @@ export default function PayrollPage() {
               </button>
               {timesheetMeta && (
                 <p className="text-sm text-[var(--muted)]">
-                  Selected: {timesheetMeta.startDate} → {timesheetMeta.endDate} (
-                  {timesheetData.length} rows)
+                  Selected: {timesheetMeta.startDate} → {timesheetMeta.endDate}{" "}
+                  ({timesheetData.length} rows)
                 </p>
               )}
             </div>
@@ -1304,7 +1326,7 @@ export default function PayrollPage() {
                       <tr
                         key={payroll.id}
                         className="hover:bg-[var(--surface)]/60 cursor-pointer"
-                        onClick={() => fetchPayrollDetail(payroll.id)}
+                        onClick={() => fetchPayrollDetail(String(payroll.id))}
                       >
                         <td className="px-4 py-3 font-semibold text-[var(--accent)]">
                           {new Date(payroll.startDate).toLocaleDateString()} –{" "}
@@ -1367,10 +1389,12 @@ export default function PayrollPage() {
                   </button>
                 </div>
                 <h3 className="text-xl font-semibold text-[var(--foreground)]">
-                  {selectedPayrollDetail.startDate} → {selectedPayrollDetail.endDate}
+                  {selectedPayrollDetail.startDate} →{" "}
+                  {selectedPayrollDetail.endDate}
                 </h3>
                 <p className="text-sm text-[var(--muted)]">
-                  Generated: {new Date(selectedPayrollDetail.generatedAt).toLocaleString()}
+                  Generated:{" "}
+                  {new Date(selectedPayrollDetail.generatedAt).toLocaleString()}
                 </p>
               </div>
               <div className="flex flex-col items-end gap-3 sm:items-end">
@@ -1436,12 +1460,20 @@ export default function PayrollPage() {
                                 !
                               </span>
                             )}
-                            <span className="font-semibold">{entry.employeeName}</span>
+                            <span className="font-semibold">
+                              {entry.employeeName}
+                            </span>
                           </div>
                         </td>
-                        <td className="px-4 py-3 text-[var(--muted)]">{entry.attendanceDays}</td>
-                        <td className="px-4 py-3 text-[var(--muted)]">{entry.halfDays}</td>
-                        <td className="px-4 py-3 text-[var(--muted)]">{entry.absentDays}</td>
+                        <td className="px-4 py-3 text-[var(--muted)]">
+                          {entry.attendanceDays}
+                        </td>
+                        <td className="px-4 py-3 text-[var(--muted)]">
+                          {entry.halfDays}
+                        </td>
+                        <td className="px-4 py-3 text-[var(--muted)]">
+                          {entry.absentDays}
+                        </td>
                         <td className="px-4 py-3 font-semibold text-[var(--foreground)]">
                           {formatMoney(entry.basePay)}
                         </td>
@@ -1479,11 +1511,16 @@ export default function PayrollPage() {
                                 subtractedValue: entry.subtractedValue,
                                 netPay: entry.netPay,
                                 basePay: entry.basePay,
-                                basePayPerDay: entry.basePay / (entry.attendanceDays + entry.halfDays * 0.5) || null,
+                                basePayPerDay:
+                                  entry.basePay /
+                                    (entry.attendanceDays +
+                                      entry.halfDays * 0.5) || null,
                                 isEdited: entry.isEdited,
                               });
                               setEditingEntryId(entry.id);
-                              setEditingPayrollId(selectedPayrollDetail?.id || null);
+                              setEditingPayrollId(
+                                selectedPayrollDetail?.id || null,
+                              );
                             }}
                             className="rounded-lg border border-[var(--accent)] bg-white px-3 py-1 text-xs font-semibold text-[var(--accent)] transition hover:bg-[var(--accent)]/10"
                           >

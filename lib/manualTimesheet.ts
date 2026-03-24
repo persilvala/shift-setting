@@ -60,6 +60,7 @@ function normalizeRows(rows: ManualInputRow[]): ValidationResult {
     const status = (raw.attendanceStatus ?? "full_day") as AttendanceStatus;
 
     if (!employeeName) errors.push("Employee name is required for all rows.");
+    if (!dept) errors.push("Department is required for all rows.");
     if (!date) errors.push("Date is required for all rows.");
 
     const parsedDate = date ? new Date(date) : null;
@@ -203,6 +204,34 @@ export async function upsertManualTimesheet(options: {
       const emp = employeeMap.get(row.employeeName.toLowerCase());
       return { ...row, employeeId: emp?.id ?? null };
     });
+
+    const employeeNamesForValidation = [...new Set(rowsWithEmployees.map((r) => r.employeeName))];
+    const existingRowsAll = await tx.timesheetRow.findMany({
+      where: { employeeName: { in: employeeNamesForValidation } },
+      select: { employeeName: true, dept: true },
+    });
+
+    const existingDeptMap = new Map<string, string>();
+    existingRowsAll.forEach((row) => {
+      if (row.dept && !existingDeptMap.has(row.employeeName)) {
+        existingDeptMap.set(row.employeeName, row.dept);
+      }
+    });
+
+    const deptErrors: string[] = [];
+    rowsWithEmployees.forEach((row) => {
+      const existingDept = existingDeptMap.get(row.employeeName);
+      if (existingDept && row.dept && row.dept.trim().toLowerCase() !== existingDept.trim().toLowerCase()) {
+        deptErrors.push(`Department mismatch for ${row.employeeName}. Existing: ${existingDept}`);
+      }
+      if (existingDept && (!row.dept || !row.dept.trim())) {
+        row.dept = existingDept;
+      }
+    });
+
+    if (deptErrors.length) {
+      return { error: Array.from(new Set(deptErrors)).join(" "), status: 400 as const };
+    }
 
     let targetTimesheetId = options.timesheetId ?? null;
     let targetTimesheetFormat = format;
