@@ -12,9 +12,13 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
+    const timesheetId = Number(id);
+    if (Number.isNaN(timesheetId)) {
+      return NextResponse.json({ error: "Invalid timesheet id" }, { status: 400 });
+    }
 
     const timesheet = await prisma.timesheet.findUnique({
-      where: { id },
+      where: { id: timesheetId },
       include: {
         rows: {
           orderBy: [{ date: "asc" }, { employeeName: "asc" }],
@@ -67,10 +71,14 @@ export async function PUT(
 ) {
   try {
     const { id } = await params;
+    const timesheetId = Number(id);
+    if (Number.isNaN(timesheetId)) {
+      return NextResponse.json({ ok: false, error: "Invalid timesheet id" }, { status: 400 });
+    }
     const body = await request.json();
     const rows = (body?.rows ?? []) as IncomingRow[];
 
-    const result = await upsertManualTimesheet({ rows, timesheetId: id });
+    const result = await upsertManualTimesheet({ rows, timesheetId });
 
     if (!result.ok) {
       return NextResponse.json(
@@ -89,7 +97,7 @@ export async function PUT(
       endDate: result.endDate
         ? result.endDate.toISOString().slice(0, 10)
         : null,
-      timesheetId: id,
+      timesheetId,
       rows: result.rows.map(manualTimesheetMapper.mapRowResponse),
     });
   } catch (error) {

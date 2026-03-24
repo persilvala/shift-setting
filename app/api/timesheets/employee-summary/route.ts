@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 
+function normalizeEmployeeKey(id: unknown, name: string | null | undefined) {
+  const source = id ?? name ?? "";
+  const str = typeof source === "string" ? source : String(source);
+  return str.trim().toLowerCase();
+}
+
 export async function GET() {
   try {
     const [employees, rows] = await Promise.all([
@@ -10,7 +16,7 @@ export async function GET() {
 
     const dayMap = new Map<string, Set<string>>();
     rows.forEach((row) => {
-      const key = (row.employeeId ?? row.employeeName ?? "").toLowerCase();
+      const key = normalizeEmployeeKey(row.employeeId, row.employeeName);
       if (!key || !row.date) return;
       const set = dayMap.get(key) ?? new Set<string>();
       set.add(row.date.toISOString().slice(0, 10));
@@ -18,7 +24,7 @@ export async function GET() {
     });
 
     const payload = employees.map((emp) => {
-      const key = (emp.id ?? emp.employeeName).toLowerCase();
+      const key = normalizeEmployeeKey(emp.id, emp.employeeName);
       const days = dayMap.get(key)?.size ?? 0;
       return { id: emp.id, employeeName: emp.employeeName, dayCount: days };
     });

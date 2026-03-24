@@ -3,7 +3,7 @@ import { prisma } from '@/lib/db';
 import type { AttendanceStatus, ParsedTimesheetRow } from '@/lib/types';
 
 type RowForMap = {
-  id: string;
+  id: number;
   employeeName: string;
   date: Date;
   beforeNoonIn: string | null;
@@ -12,7 +12,7 @@ type RowForMap = {
   workHours: number | null;
   dept: string | null;
   userId: string | null;
-  employeeId: string | null;
+  employeeId: number | null;
   attendanceStatus: string;
 };
 

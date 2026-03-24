@@ -40,6 +40,12 @@ function countTimeFields(row: ParsedTimesheetRow) {
   return count;
 }
 
+function normalizeEmployeeKey(id?: unknown, name?: string | null) {
+  const source = id ?? name ?? '';
+  const str = typeof source === 'string' ? source : String(source);
+  return str.trim().toLowerCase();
+}
+
 function normalizeParsedRow(row: ParsedTimesheetRow): ParsedTimesheetRow {
   return {
     ...row,
@@ -94,7 +100,7 @@ export async function POST(request: Request) {
 
     const dedupMap = new Map<string, ParsedTimesheetRow>();
     filteredRows.forEach((row) => {
-      const key = `${row.employeeName.toLowerCase()}|${row.date}`;
+      const key = `${normalizeEmployeeKey(row.employeeId, row.employeeName)}|${row.date}`;
       const existing = dedupMap.get(key);
       if (!existing || countTimeFields(row) > countTimeFields(existing)) {
         dedupMap.set(key, row);
@@ -106,7 +112,7 @@ export async function POST(request: Request) {
     const names = Array.from(new Set(dedupedRows.map((r) => r.employeeName).filter(Boolean)));
 
     let deptMap = new Map<string, string | null>();
-    let employeeMap = new Map<string, { id: string; employeeName: string }>();
+    let employeeMap = new Map<string, { id: number; employeeName: string }>();
 
     if (names.length) {
       const [existingRows, employees] = await Promise.all([
@@ -142,13 +148,17 @@ export async function POST(request: Request) {
     const incomingRows = dedupedRows.map(decorateIncoming);
 
     // Pull existing persisted rows for identity-linked merge
+    const employeeIds = Array.from(employeeMap.values())
+      .map((e) => Number(e.id))
+      .filter((id) => Number.isFinite(id));
+
     const existingRowsForEmployees = names.length
       ? await prisma.timesheetRow.findMany({
           where: {
             OR: [
               { employeeName: { in: names } },
-              { employeeId: { in: Array.from(employeeMap.values()).map((e) => e.id) } },
-            ],
+              employeeIds.length ? { employeeId: { in: employeeIds } } : undefined,
+            ].filter(Boolean) as { employeeName?: { in: string[] }; employeeId?: { in: number[] } }[],
           },
           orderBy: [{ date: 'asc' }, { employeeName: 'asc' }],
         })
@@ -170,7 +180,7 @@ export async function POST(request: Request) {
 
     const mergedMap = new Map<string, ParsedTimesheetRow>();
     const keyFor = (row: ParsedTimesheetRow) => {
-      const empKey = (row.employeeId ?? row.employeeName ?? '').toLowerCase();
+      const empKey = normalizeEmployeeKey(row.employeeId, row.employeeName);
       return `${empKey}|${row.date ?? ''}`;
     };
 

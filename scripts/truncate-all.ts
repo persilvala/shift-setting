@@ -18,6 +18,7 @@ async function truncateAll() {
     prisma.timesheetRow.deleteMany(),
     prisma.timesheet.deleteMany(),
     prisma.employee.deleteMany(),
+    prisma.session.deleteMany(),
     prisma.admin.deleteMany(),
   ]);
 

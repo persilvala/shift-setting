@@ -5,12 +5,21 @@ type Params = {
   params: Promise<{ id: string }>;
 };
 
+function parseId(id: string): number | null {
+  const parsed = Number(id);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 export async function GET(request: Request, { params }: Params) {
   try {
     const { id } = await params;
+    const payrollId = parseId(id);
+    if (payrollId === null) {
+      return NextResponse.json({ error: "Invalid payroll id" }, { status: 400 });
+    }
 
     const payroll = await prisma.payroll.findUnique({
-      where: { id },
+      where: { id: payrollId },
       include: {
         entries: {
           include: {

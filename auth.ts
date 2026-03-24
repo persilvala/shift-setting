@@ -5,6 +5,7 @@ import { prisma } from "./lib/db";
 import bcrypt from "bcryptjs";
 
 const SEVEN_DAYS = 7 * 24 * 60 * 60;
+const db = prisma as any;
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
@@ -23,7 +24,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const username = credentials.username as string;
         const password = credentials.password as string;
 
-        const admin = await prisma.admin.findUnique({
+        const admin = await db.admin.findUnique({
           where: { username },
         });
 
@@ -51,13 +52,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
-        token.id = user.id;
+        (token as any).id = Number(user.id);
       }
       return token;
     },
     async session({ session, token }) {
       if (session.user) {
-        session.user.id = token.id as string;
+        (session.user as any).id = Number((token as any).id);
       }
       return session;
     },

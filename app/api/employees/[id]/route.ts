@@ -3,11 +3,20 @@ import { prisma } from "@/lib/db";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
+function parseId(value: string): number | null {
+  const id = Number(value);
+  return Number.isFinite(id) ? id : null;
+}
+
 export async function GET(request: Request, { params }: RouteParams) {
   try {
     const { id } = await params;
+    const employeeId = parseId(id);
+    if (employeeId === null) {
+      return NextResponse.json({ error: "Invalid employee id" }, { status: 400 });
+    }
     const employee = await prisma.employee.findUnique({
-      where: { id },
+      where: { id: employeeId },
     });
 
     if (!employee) {
@@ -30,11 +39,15 @@ export async function GET(request: Request, { params }: RouteParams) {
 export async function PUT(request: Request, { params }: RouteParams) {
   try {
     const { id } = await params;
+    const employeeId = parseId(id);
+    if (employeeId === null) {
+      return NextResponse.json({ error: "Invalid employee id" }, { status: 400 });
+    }
     const body = await request.json();
     const { employeeName, basePayPerDay } = body;
 
     const employee = await prisma.employee.update({
-      where: { id },
+      where: { id: employeeId },
       data: {
         employeeName: employeeName !== undefined ? employeeName : undefined,
         basePayPerDay: basePayPerDay !== undefined ? (basePayPerDay ? parseFloat(basePayPerDay) : undefined) : undefined,
@@ -55,8 +68,12 @@ export async function PUT(request: Request, { params }: RouteParams) {
 export async function DELETE(request: Request, { params }: RouteParams) {
   try {
     const { id } = await params;
+    const employeeId = parseId(id);
+    if (employeeId === null) {
+      return NextResponse.json({ error: "Invalid employee id" }, { status: 400 });
+    }
     await prisma.employee.delete({
-      where: { id },
+      where: { id: employeeId },
     });
 
     return NextResponse.json({ success: true });

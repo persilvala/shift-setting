@@ -22,7 +22,7 @@ const PREVIEW_LIMIT = 50;
 type ManualRow = {
   id: string;
   employeeName: string;
-  employeeId?: string | null;
+  employeeId?: number | null;
   date: string;
   totalHours: number | null;
   dept?: string | null;
@@ -39,7 +39,7 @@ type TimesheetPayload = {
   warnings: string[];
   startDate?: string | null;
   endDate?: string | null;
-  timesheetId?: string;
+  timesheetId?: number | null;
   fileName?: string | null;
   mergedFromDatabaseCount?: number;
 };
@@ -51,7 +51,7 @@ type TimesheetLoadResponse = {
 };
 
 type TimesheetHistoryItem = {
-  id: string;
+  id: number;
   startDate: string;
   endDate: string;
   uploadedAt: string;
@@ -78,7 +78,7 @@ const createBlankManualRow = (): ManualRow => ({
   attendanceStatus: "full_day",
 });
 
-type EmployeeSummary = { id: string; employeeName: string; dayCount: number };
+type EmployeeSummary = { id: number; employeeName: string; dayCount: number };
 
 const mapParsedToManualRow = (row: ParsedTimesheetRow, index: number): ManualRow => ({
   id: (row as any).id ?? `manual-${index}-${row.employeeName}-${row.date ?? ""}`,
@@ -121,10 +121,10 @@ export function TimesheetUpload() {
   const [loadingRows, setLoadingRows] = useState(false);
   const [employees, setEmployees] = useState<EmployeeSummary[]>([]);
   const [loadingEmployees, setLoadingEmployees] = useState(false);
-  const [activeTimesheetId, setActiveTimesheetId] = useState<string | null>(null);
+  const [activeTimesheetId, setActiveTimesheetId] = useState<number | null>(null);
   const [timesheetHistory, setTimesheetHistory] = useState<TimesheetHistoryItem[]>([]);
   const [historyPagination, setHistoryPagination] = useState<HistoryPagination>({ page: 1, limit: 5, total: 0, totalPages: 1 });
-  const [selectedTimesheetId, setSelectedTimesheetId] = useState<string | null>(null);
+  const [selectedTimesheetId, setSelectedTimesheetId] = useState<number | null>(null);
 
   const hydrateFromServer = (payload: TimesheetPayload) => {
     const rows = payload.rows ?? [];
@@ -134,7 +134,10 @@ export function TimesheetUpload() {
     if (payload.format === "manual" || entryMode === "manual") {
       setManualRows(rows.map(mapParsedToManualRow));
     }
-    setActiveTimesheetId(payload.timesheetId ?? null);
+    const tsId = payload.timesheetId !== undefined && payload.timesheetId !== null
+      ? Number(payload.timesheetId)
+      : null;
+    setActiveTimesheetId(Number.isFinite(tsId as number) ? tsId : null);
   };
 
   const loadEmployees = async () => {
@@ -152,11 +155,16 @@ export function TimesheetUpload() {
     }
   };
 
-  const loadEmployeeRows = async (name: string, employeeId?: string | null, page = 1) => {
+  const filterRowsForEmployee = (rows: ParsedTimesheetRow[], name: string) => {
+    const scoped = name.trim().toLowerCase();
+    return rows.filter((row) => (row.employeeName ?? "").toLowerCase() === scoped);
+  };
+
+  const loadEmployeeRows = async (name: string, employeeId?: number | null, page = 1) => {
     try {
       setLoadingRows(true);
       const params = new URLSearchParams();
-      if (employeeId) params.set("employeeId", employeeId);
+      if (employeeId !== undefined && employeeId !== null) params.set("employeeId", String(employeeId));
       else params.set("employeeName", name);
       params.set("page", page.toString());
       params.set("limit", "5");
@@ -168,16 +176,21 @@ export function TimesheetUpload() {
       const timesheets = (data.timesheets ?? []) as TimesheetHistoryItem[];
       const pagination = data.pagination as HistoryPagination;
 
-      setTimesheetHistory(timesheets);
+      const scopedTimesheets = timesheets.map((t) => ({
+        ...t,
+        rows: filterRowsForEmployee(t.rows, name),
+      }));
+
+      setTimesheetHistory(scopedTimesheets);
       setHistoryPagination(pagination);
 
-      if (timesheets.length > 0) {
-        const firstTimesheet = timesheets[0];
-        if (!selectedTimesheetId || !timesheets.find(t => t.id === selectedTimesheetId)) {
+      if (scopedTimesheets.length > 0) {
+        const firstTimesheet = scopedTimesheets[0];
+        if (!selectedTimesheetId || !scopedTimesheets.find(t => t.id === selectedTimesheetId)) {
           setSelectedTimesheetId(firstTimesheet.id);
         }
-        const selected = timesheets.find(t => t.id === selectedTimesheetId) ?? timesheets[0];
-        setManualRows(selected.rows.map(mapParsedToManualRow));
+        const selected = scopedTimesheets.find(t => t.id === selectedTimesheetId) ?? scopedTimesheets[0];
+        setManualRows(filterRowsForEmployee(selected.rows, name).map(mapParsedToManualRow));
         setStartDate(selected.startDate ?? null);
         setEndDate(selected.endDate ?? null);
         setBulkDept(selected.rows[0]?.dept ?? "");
@@ -199,11 +212,12 @@ export function TimesheetUpload() {
     }
   };
 
-  const selectTimesheet = (timesheetId: string) => {
+  const selectTimesheet = (timesheetId: number) => {
     setSelectedTimesheetId(timesheetId);
     const timesheet = timesheetHistory.find((t) => t.id === timesheetId);
     if (timesheet) {
-      setManualRows(timesheet.rows.map(mapParsedToManualRow));
+      const scopedRows = filterRowsForEmployee(timesheet.rows, effectiveEmployee || timesheet.rows[0]?.employeeName || "");
+      setManualRows(scopedRows.map(mapParsedToManualRow));
       setStartDate(timesheet.startDate ?? null);
       setEndDate(timesheet.endDate ?? null);
       setActiveTimesheetId(timesheetId);
@@ -246,6 +260,11 @@ export function TimesheetUpload() {
   const saveUploadRows = async (rows: ParsedTimesheetRow[]) => {
     try {
       setLoadingRows(true);
+
+      if (!validateUploadPreview(rows)) {
+        return false;
+      }
+
       const payloadRows = rows.map((row) => ({
         employeeName: row.employeeName,
         dept: row.dept ?? "",
@@ -732,21 +751,39 @@ export function TimesheetUpload() {
     setResult((prev) => (prev ? { ...prev, rows: active } : prev));
   };
 
-  const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
-    const activeRows = rows.filter((row) => !row.isSoftDeleted);
-    const duplicateKeyCounts = new Map<string, number>();
-    activeRows.forEach((row) => {
-      if (!row.employeeName?.trim() || !row.date) return;
-      const key = `${row.employeeName.trim().toLowerCase()}|${row.date}`;
-      duplicateKeyCounts.set(key, (duplicateKeyCounts.get(key) ?? 0) + 1);
-    });
+  const validateUploadPreview = (rows: ParsedTimesheetRow[]) => {
+    const dupCheck = flagUploadDuplicates(rows);
+    if (dupCheck.hasDuplicates) {
+      setPreviewError("Each employee can only have one row per date. Fix duplicates before saving.");
+      if (dupCheck.invalidMap) setInvalidFields(dupCheck.invalidMap);
+      if (dupCheck.firstIndex !== undefined) scrollToRow(`preview-row-upload-${dupCheck.firstIndex}`);
+      return false;
+    }
+    setInvalidFields({});
+    setPreviewError(null);
+    return true;
+  };
 
-    const duplicateIndices: number[] = [];
-    rows.forEach((row, i) => {
-      if (row.isSoftDeleted || !row.employeeName?.trim() || !row.date) return;
-      const key = `${row.employeeName.trim().toLowerCase()}|${row.date}`;
-      if ((duplicateKeyCounts.get(key) ?? 0) > 1) duplicateIndices.push(i);
-    });
+const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
+  const activeRows = rows.filter((row) => !row.isSoftDeleted);
+  const duplicateKeyCounts = new Map<string, number>();
+  activeRows.forEach((row) => {
+    const emp = (row.employeeId ?? row.employeeName ?? '').toString().trim().toLowerCase();
+    const date = row.date;
+    if (!emp || !date) return;
+    const key = `${emp}|${date}`;
+    duplicateKeyCounts.set(key, (duplicateKeyCounts.get(key) ?? 0) + 1);
+  });
+
+  const duplicateIndices: number[] = [];
+  rows.forEach((row, i) => {
+    if (row.isSoftDeleted) return;
+    const emp = (row.employeeId ?? row.employeeName ?? '').toString().trim().toLowerCase();
+    const date = row.date;
+    if (!emp || !date) return;
+    const key = `${emp}|${date}`;
+    if ((duplicateKeyCounts.get(key) ?? 0) > 1) duplicateIndices.push(i);
+  });
 
     if (!duplicateIndices.length) return { hasDuplicates: false } as const;
 
@@ -786,7 +823,7 @@ export function TimesheetUpload() {
     const found = employees.find((emp) => emp.employeeName.toLowerCase() === trimmed.toLowerCase());
     loadEmployeeRows(trimmed, found?.id);
     if (!found) {
-      setEmployees((prev) => [...prev, { id: "", employeeName: trimmed, dayCount: 0 }]);
+      setEmployees((prev) => [...prev, { id: 0, employeeName: trimmed, dayCount: 0 }]);
     }
     setManualMessage(`Editing timesheet for ${trimmed}.`);
   };
@@ -841,7 +878,7 @@ export function TimesheetUpload() {
                   const label = `New Employee ${newEmployeeCounter}`;
                   const seeded = Array.from({ length: 20 }, () => ({ ...createBlankManualRow(), employeeName: label }));
                   setManualRows(seeded);
-                  setEmployees((prev) => [...prev, { id: "", employeeName: label, dayCount: 0 }]);
+                  setEmployees((prev) => [...prev, { id: 0, employeeName: label, dayCount: 0 }]);
                   setCurrentEmployee(label);
                   setManualEmployee(label);
                   setBulkName(label);
@@ -974,7 +1011,7 @@ export function TimesheetUpload() {
                     const label = `New Employee ${newEmployeeCounter}`;
                     const seeded = Array.from({ length: 20 }, () => ({ ...createBlankManualRow(), employeeName: label }));
                     setManualRows(seeded);
-                    setEmployees((prev) => [...prev, { id: "", employeeName: label, dayCount: 0 }]);
+                    setEmployees((prev) => [...prev, { id: 0, employeeName: label, dayCount: 0 }]);
                     setCurrentEmployee(label);
                     setManualEmployee(label);
                     setBulkName(label);

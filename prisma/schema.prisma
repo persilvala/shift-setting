@@ -7,16 +7,17 @@ datasource db {
 }
 
 model Admin {
-  id                 String   @id @default(cuid())
+  id                 Int      @id @default(autoincrement())
   username           String   @unique
   passwordHash       String
   mustChangePassword Boolean  @default(true)
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
+  sessions           Session[]
 }
 
 model Employee {
-  id            String        @id @default(cuid())
+  id            Int           @id @default(autoincrement())
   employeeName  String        @unique
   basePayPerDay Float?
   createdAt     DateTime      @default(now())
@@ -28,7 +29,7 @@ model Employee {
 }
 
 model Timesheet {
-  id          String         @id @default(cuid())
+  id          Int            @id @default(autoincrement())
   fileName    String?
   format      String
   startDate   DateTime
@@ -43,11 +44,11 @@ model Timesheet {
 }
 
 model TimesheetRow {
-  id               String    @id @default(cuid())
-  timesheetId      String
-  employeeId       String?
+  id               Int       @id @default(autoincrement())
+  timesheetId      Int
+  employeeId       Int?
   employeeName     String
-  userId          String?
+  userId           String?
   date             DateTime
   weekday          String?
   dept             String?
@@ -87,8 +88,8 @@ model TimesheetRow {
 }
 
 model Payroll {
-  id            String         @id @default(cuid())
-  timesheetId   String?
+  id            Int            @id @default(autoincrement())
+  timesheetId   Int?
   startDate     DateTime
   endDate       DateTime
   basePayPerDay Float
@@ -102,10 +103,10 @@ model Payroll {
 }
 
 model PayrollEntry {
-  id              String   @id @default(cuid())
-  payrollId       String
-  timesheetRowId  String?
-  employeeId      String
+  id              Int      @id @default(autoincrement())
+  payrollId       Int
+  timesheetRowId  Int?
+  employeeId      Int
   attendanceDays  Int      @default(0)
   halfDays        Int      @default(0)
   absentDays      Int      @default(0)
@@ -121,4 +122,16 @@ model PayrollEntry {
 
   @@index([payrollId])
   @@index([employeeId])
+}
+
+model Session {
+  id           Int      @id @default(autoincrement())
+  sessionToken String   @unique
+  userId       Int
+  expires      DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  admin        Admin    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }

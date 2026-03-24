@@ -11,7 +11,7 @@ type RowForMap = {
   workHours: number | null;
   dept: string | null;
   userId: string | null;
-  employeeId: string | null;
+  employeeId: number | null;
   attendanceStatus: string;
 };
 
@@ -34,17 +34,19 @@ function mapRow(row: RowForMap): ParsedTimesheetRow {
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
-    const employeeId = url.searchParams.get("employeeId");
-    const employeeName = url.searchParams.get("employeeName");
+    const employeeIdParam = url.searchParams.get("employeeId");
+    const employeeName = url.searchParams.get("employeeName")?.trim();
+    const employeeId = employeeIdParam ? Number(employeeIdParam) : null;
+    const hasEmployeeId = Number.isFinite(employeeId);
     const page = parseInt(url.searchParams.get("page") ?? "1", 10);
     const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "5", 10), 20);
 
-    if (!employeeId && !employeeName) {
+    if (!hasEmployeeId && !employeeName) {
       return NextResponse.json({ ok: false, error: "employeeId or employeeName is required" }, { status: 400 });
     }
 
-    const employee = employeeId
-      ? await prisma.employee.findUnique({ where: { id: employeeId } })
+    const employee = hasEmployeeId
+      ? await prisma.employee.findUnique({ where: { id: employeeId! } })
       : await prisma.employee.findFirst({ where: { employeeName: employeeName ?? undefined } });
 
     if (!employee) {

@@ -15,7 +15,7 @@ export async function checkMustChangePassword(): Promise<boolean> {
   }
 
   const admin = await prisma.admin.findUnique({
-    where: { id: session.user.id },
+    where: { id: Number(session.user.id) },
     select: { mustChangePassword: true },
   });
 
@@ -29,7 +29,7 @@ export async function checkPasswordStatus(): Promise<{ mustChange: boolean }> {
   }
 
   const admin = await prisma.admin.findUnique({
-    where: { id: session.user.id },
+    where: { id: Number(session.user.id) },
     select: { mustChangePassword: true },
   });
 
@@ -60,7 +60,7 @@ export async function changePassword(
     }
 
     const admin = await prisma.admin.findUnique({
-      where: { id: session.user.id },
+      where: { id: Number(session.user.id) },
     });
 
     if (!admin) {
@@ -75,7 +75,7 @@ export async function changePassword(
     const passwordHash = await bcrypt.hash(newPassword, 10);
 
     await prisma.admin.update({
-      where: { id: session.user.id },
+      where: { id: Number(session.user.id) },
       data: {
         passwordHash,
         mustChangePassword: false,
@@ -134,14 +134,14 @@ export async function createAdmin(
 }
 
 export async function deleteAdmin(
-  adminId: string
+  adminId: number
 ): Promise<{ success: boolean; error?: string }> {
   const session = await auth();
   if (!session?.user?.id) {
     return { success: false, error: "Unauthorized" };
   }
 
-  if (adminId === session.user.id) {
+  if (adminId === Number(session.user.id)) {
     return { success: false, error: "You cannot delete yourself" };
   }
 
@@ -177,7 +177,7 @@ export async function getAllAdmins() {
   });
 }
 
-export async function getCurrentAdminId(): Promise<string | null> {
+export async function getCurrentAdminId(): Promise<number | null> {
   const session = await auth();
   return session?.user?.id ?? null;
 }

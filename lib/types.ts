@@ -3,7 +3,7 @@
 export type AttendanceStatus = "absent" | "full_day" | "half_day";
 
 export type ParsedTimesheetRow = {
-  id?: string;
+  id?: number;
   employeeName: string;
   date: string | null;
   timeIn: string | null;
@@ -18,7 +18,7 @@ export type ParsedTimesheetRow = {
   template?: string | null;
   raw?: string[];
   isSoftDeleted?: boolean;
-  employeeId?: string;
+  employeeId?: number | null;
   attendanceStatus?: AttendanceStatus;
   beforeNoonIn?: string | null;
   beforeNoonOut?: string | null;
@@ -49,7 +49,7 @@ export type ParsedTimesheetRow = {
 };
 
 export type Employee = {
-  id: string;
+  id: number;
   employeeName: string;
   basePayPerDay: number | null;
   createdAt: Date;
@@ -57,10 +57,10 @@ export type Employee = {
 };
 
 export type PayrollEntry = {
-  id: string;
-  payrollId: string;
-  timesheetRowId: string | null;
-  employeeId: string;
+  id: number;
+  payrollId: number;
+  timesheetRowId: number | null;
+  employeeId: number;
   addedValue: number;
   subtractedValue: number;
   isEdited: boolean;
@@ -68,11 +68,11 @@ export type PayrollEntry = {
 };
 
 export type PayrollEntryDisplay = {
-  id: string;
-  payrollId: string;
-  employeeId: string;
+  id: number;
+  payrollId: number;
+  employeeId: number;
   employeeName: string;
-  timesheetRowId: string | null;
+  timesheetRowId: number | null;
   attendanceStatus: AttendanceStatus;
   addedValue: number;
   subtractedValue: number;
@@ -90,7 +90,7 @@ export type TimesheetMeta = {
   format?: "excel" | "pdf";
   totalRows?: number;
   uploadedAt?: string;
-  timesheetId?: string;
+  timesheetId?: number | null;
   startDate?: string | null;
   endDate?: string | null;
 };
@@ -125,8 +125,8 @@ export type Adjustment = {
 };
 
 export type SavedPayroll = {
-  id: string;
-  timesheetId: string | null;
+  id: number;
+  timesheetId: number | null;
   startDate: string;
   endDate: string;
   basePayPerDay: number;
@@ -137,7 +137,7 @@ export type SavedPayroll = {
 };
 
 export type TimesheetHistoryItem = {
-  id: string;
+  id: number;
   startDate: string;
   endDate: string;
   uploadedAt: string;

@@ -6,7 +6,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { Pagination } from "@/components/Pagination";
 
 type Admin = {
-  id: string;
+  id: number;
   username: string;
   mustChangePassword: boolean;
   createdAt: Date;
@@ -17,7 +17,7 @@ export function AdminList({
   currentAdminId,
 }: {
   admins: Admin[];
-  currentAdminId: string | null;
+  currentAdminId: number | null;
 }) {
   const [admins, setAdmins] = useState(initialAdmins);
   const [username, setUsername] = useState("");
@@ -53,7 +53,7 @@ export function AdminList({
     setLoading(false);
   };
 
-  const handleDelete = async (adminId: string) => {
+  const handleDelete = async (adminId: number) => {
     if (!confirm("Are you sure you want to delete this admin?")) {
       return;
     }
