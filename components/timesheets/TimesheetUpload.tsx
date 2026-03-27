@@ -78,6 +78,17 @@ const createBlankManualRow = (): ManualRow => ({
   attendanceStatus: "full_day",
 });
 
+const parseDateInput = (value: string): Date | null => {
+  if (!value) return null;
+  const [yearStr, monthStr, dayStr] = value.split("-");
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  const day = Number(dayStr);
+  if (!year || !month || !day) return null;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
 type EmployeeSummary = { id: number; employeeName: string; dayCount: number };
 
 const mapParsedToManualRow = (row: ParsedTimesheetRow, index: number): ManualRow => ({
@@ -107,6 +118,8 @@ export function TimesheetUpload() {
   const [manualDate, setManualDate] = useState("");
   const [manualHours, setManualHours] = useState("");
   const [manualDept, setManualDept] = useState("");
+  const [rangeStart, setRangeStart] = useState("");
+  const [rangeEnd, setRangeEnd] = useState("");
   const [manualEditingId, setManualEditingId] = useState<string | null>(null);
   const [manualMessage, setManualMessage] = useState<string | null>(null);
   const [uploadMessage, setUploadMessage] = useState<string | null>(null);
@@ -324,6 +337,153 @@ export function TimesheetUpload() {
         : row
     );
 
+  const addDateRangeRows = () => {
+    setPreviewError(null);
+    setInvalidFields({});
+
+    if (!rangeStart || !rangeEnd) {
+      setPreviewError("Choose a start and end date to add rows.");
+      return;
+    }
+
+    const start = parseDateInput(rangeStart);
+    const end = parseDateInput(rangeEnd);
+    if (!start || !end) {
+      setPreviewError("Use valid calendar dates.");
+      return;
+    }
+
+    if (start.getTime() > end.getTime()) {
+      setPreviewError("Start date must be on or before end date.");
+      return;
+    }
+
+    const totalDays = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    const RANGE_LIMIT = 90;
+    if (totalDays > RANGE_LIMIT) {
+      setPreviewError(`Choose a range of ${RANGE_LIMIT} days or fewer.`);
+      return;
+    }
+
+    if (entryMode === "manual") {
+      const scoped = effectiveEmployee.trim();
+      if (!scoped) {
+        setPreviewError("Select or add an employee before adding dates.");
+        return;
+      }
+
+      let added = 0;
+      setManualRows((rows) => {
+        const existingDates = new Set(
+          rows
+            .filter((row) => row.employeeName.toLowerCase() === scoped.toLowerCase())
+            .map((row) => row.date)
+        );
+
+        const additions: ManualRow[] = [];
+        const cursor = new Date(start);
+        while (cursor.getTime() <= end.getTime()) {
+          const dateStr = cursor.toISOString().slice(0, 10);
+          if (!existingDates.has(dateStr)) {
+            const base = createBlankManualRow();
+            additions.push({
+              ...base,
+              employeeName: scoped,
+              date: dateStr,
+              dept: bulkDept ?? base.dept,
+            });
+            existingDates.add(dateStr);
+          }
+          cursor.setUTCDate(cursor.getUTCDate() + 1);
+        }
+
+        added = additions.length;
+        if (!added) return rows;
+        return [...additions, ...rows];
+      });
+
+      const skipped = totalDays - added;
+      if (added === 0) {
+        setManualMessage("No new dates added; all dates already exist for this employee.");
+      } else {
+        setManualMessage(
+          `Added ${added} date${added === 1 ? "" : "s"} for ${scoped}${skipped > 0 ? ` (${skipped} already existed)` : ""}.`
+        );
+      }
+
+      setRangeStart("");
+      setRangeEnd("");
+      return;
+    }
+
+    const baseResult: TimesheetPayload = result ?? {
+      ok: true,
+      format: "excel",
+      rows: [],
+      warnings: [],
+      startDate: null,
+      endDate: null,
+      timesheetId: null,
+      fileName: null,
+      mergedFromDatabaseCount: 0,
+    };
+
+    const existingDates = new Set((baseResult.rows ?? []).map((row) => row.date).filter(Boolean));
+    const additions: ParsedTimesheetRow[] = [];
+    const cursor = new Date(start);
+    while (cursor.getTime() <= end.getTime()) {
+      const dateStr = cursor.toISOString().slice(0, 10);
+      if (!existingDates.has(dateStr)) {
+        additions.push({
+          employeeName: "",
+          date: dateStr,
+          timeIn: "",
+          timeOut: "",
+          totalHours: 0,
+          issues: [],
+          sourceLine: (baseResult.rows?.length ?? 0) + additions.length + 1,
+          dept: "",
+          userId: "",
+          attendanceStatus: "full_day",
+          isSoftDeleted: false,
+        });
+        existingDates.add(dateStr);
+      }
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+
+    const added = additions.length;
+    const skipped = totalDays - added;
+    if (added === 0) {
+      setUploadMessage("No new dates added; all dates already exist in preview.");
+      setRangeStart("");
+      setRangeEnd("");
+      if (!result) setResult(baseResult);
+      return;
+    }
+
+    const nextRows = [...additions, ...baseResult.rows];
+    const validDates = nextRows
+      .map((row) => parseDateInput(row.date ?? ""))
+      .filter((d): d is Date => Boolean(d));
+    const nextStart = validDates.length
+      ? new Date(Math.min(...validDates.map((d) => d.getTime()))).toISOString().slice(0, 10)
+      : baseResult.startDate ?? null;
+    const nextEnd = validDates.length
+      ? new Date(Math.max(...validDates.map((d) => d.getTime()))).toISOString().slice(0, 10)
+      : baseResult.endDate ?? null;
+
+    setResult({ ...baseResult, rows: nextRows, startDate: nextStart, endDate: nextEnd });
+    if (nextStart) setStartDate(nextStart);
+    if (nextEnd) setEndDate(nextEnd);
+
+    setUploadMessage(
+      `Added ${added} date${added === 1 ? "" : "s"} to upload preview${skipped > 0 ? ` (${skipped} already existed)` : ""}.`
+    );
+    setRangeStart("");
+    setRangeEnd("");
+  };
+
   const addBlankRow = () => {
     if (entryMode === "manual") {
       const scoped = currentEmployee.trim();
@@ -343,7 +503,17 @@ export function TimesheetUpload() {
     }
 
     setResult((prev) => {
-      if (!prev) return prev;
+      const base: TimesheetPayload = prev ?? {
+        ok: true,
+        format: "excel",
+        rows: [],
+        warnings: [],
+        startDate: null,
+        endDate: null,
+        timesheetId: null,
+        fileName: null,
+        mergedFromDatabaseCount: 0,
+      };
       const blank: ParsedTimesheetRow = {
         employeeName: "",
         date: "",
@@ -351,14 +521,16 @@ export function TimesheetUpload() {
         timeOut: "",
         totalHours: 0,
         issues: [],
-        sourceLine: prev.rows.length + 1,
+        sourceLine: (base.rows?.length ?? 0) + 1,
         dept: "",
         userId: "",
+        attendanceStatus: "full_day",
+        isSoftDeleted: false,
       };
-      const nextRows = [blank, ...prev.rows];
+      const nextRows = [blank, ...(base.rows ?? [])];
       persistUploadRows(nextRows);
       setUploadMessage("Blank row added. Save to keep it.");
-      return { ...prev, rows: nextRows };
+      return { ...base, rows: nextRows };
     });
   };
 
@@ -1103,15 +1275,37 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
                 {entryMode === "upload" && uploadMessage ? (
                   <span className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[var(--muted)]">{uploadMessage}</span>
                 ) : null}
-                {entryMode === "manual" ? (
+                <div className="ml-auto flex flex-wrap items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2 rounded-full border border-[var(--border)] bg-white px-3 py-2 text-xs font-semibold text-[var(--muted)]">
+                    <input
+                      type="date"
+                      value={rangeStart}
+                      onChange={(e) => setRangeStart(e.target.value)}
+                      className="rounded-lg border border-[var(--border)] px-2 py-1 text-xs text-[var(--foreground)] focus:border-[var(--accent)] focus:outline-none"
+                    />
+                    <span className="text-[var(--muted)]">to</span>
+                    <input
+                      type="date"
+                      value={rangeEnd}
+                      onChange={(e) => setRangeEnd(e.target.value)}
+                      className="rounded-lg border border-[var(--border)] px-2 py-1 text-xs text-[var(--foreground)] focus:border-[var(--accent)] focus:outline-none"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={addDateRangeRows}
+                    className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-3 py-2 text-xs font-semibold text-white shadow-[0_10px_24px_rgba(47,109,246,0.2)] transition hover:scale-[1.01]"
+                  >
+                    + Add date range
+                  </button>
                   <button
                     type="button"
                     onClick={addBlankRow}
-                    className="ml-auto inline-flex items-center gap-2 rounded-full bg-[var(--accent)]/10 px-3 py-2 text-xs font-semibold text-[var(--accent)] hover:scale-[1.01]"
+                    className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)]/10 px-3 py-2 text-xs font-semibold text-[var(--accent)] hover:scale-[1.01]"
                   >
-                    + Add row
+                    + Single row
                   </button>
-                ) : null}
+                </div>
                 {entryMode === "upload" ? null : null}
               </div>
             </div>
