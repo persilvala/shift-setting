@@ -154,9 +154,25 @@ export default function PayrollPage() {
       id: string
       employeeId: string
       employeeName: string
+      timesheetRowId: string | null
+      date: string | null
       attendanceDays: number
       halfDays: number
       absentDays: number
+      basePay: number
+      addedValue: number
+      subtractedValue: number
+      netPay: number
+      isEdited: boolean
+    }>
+  } | null>(null)
+
+  const [employeeEntriesModal, setEmployeeEntriesModal] = useState<{
+    employeeId: string
+    employeeName: string
+    entries: Array<{
+      id: string
+      date: string | null
       basePay: number
       addedValue: number
       subtractedValue: number
@@ -242,6 +258,61 @@ export default function PayrollPage() {
     },
     [employees],
   )
+
+  const aggregatedPayrollEntries = useMemo(() => {
+    if (!selectedPayrollDetail) return []
+    const grouped = new Map<string, {
+      employeeId: string
+      employeeName: string
+      totalBasePay: number
+      totalAdded: number
+      totalSubtracted: number
+      totalNetPay: number
+      hasEdited: boolean
+      entries: Array<{
+        id: string
+        date: string | null
+        basePay: number
+        addedValue: number
+        subtractedValue: number
+        netPay: number
+        isEdited: boolean
+      }>
+    }>()
+
+    selectedPayrollDetail.entries.forEach((entry) => {
+      const key = entry.employeeId
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          employeeId: entry.employeeId,
+          employeeName: entry.employeeName,
+          totalBasePay: 0,
+          totalAdded: 0,
+          totalSubtracted: 0,
+          totalNetPay: 0,
+          hasEdited: false,
+          entries: [],
+        })
+      }
+      const group = grouped.get(key)!
+      group.totalBasePay += entry.basePay
+      group.totalAdded += entry.addedValue
+      group.totalSubtracted += entry.subtractedValue
+      group.totalNetPay += entry.netPay
+      if (entry.isEdited) group.hasEdited = true
+      group.entries.push({
+        id: entry.id,
+        date: entry.date,
+        basePay: entry.basePay,
+        addedValue: entry.addedValue,
+        subtractedValue: entry.subtractedValue,
+        netPay: entry.netPay,
+        isEdited: entry.isEdited,
+      })
+    })
+
+    return Array.from(grouped.values()).sort((a, b) => a.employeeName.localeCompare(b.employeeName))
+  }, [selectedPayrollDetail])
 
   const totalNetPay = useMemo(() => {
     if (!payrollData) return 0
@@ -1135,20 +1206,11 @@ export default function PayrollPage() {
 
             <div className="mt-5 overflow-hidden rounded-2xl border border-[var(--border)] bg-white/90 shadow-[0_12px_32px_rgba(16,40,94,0.06)]">
               <div className="overflow-x-auto">
-                <table className="min-w-[1100px] w-full text-sm">
+                <table className="min-w-[900px] w-full text-sm">
                   <thead className="bg-[var(--surface)] text-[var(--muted)]">
                     <tr>
                       <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">
                         Name
-                      </th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">
-                        Full Days
-                      </th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">
-                        Half Days
-                      </th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">
-                        Absent
                       </th>
                       <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">
                         Base Pay
@@ -1165,64 +1227,39 @@ export default function PayrollPage() {
                       <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">
                         Status
                       </th>
-                      <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-[0.24em]">
-                        Actions
-                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--border)]/70 text-[var(--foreground)]">
-                    {selectedPayrollDetail.entries.map((entry) => (
-                      <tr key={entry.id} className="hover:bg-[var(--surface)]/60">
+                    {aggregatedPayrollEntries.map((entry) => (
+                      <tr
+                        key={entry.employeeId}
+                        className="hover:bg-[var(--surface)]/60 cursor-pointer"
+                        onClick={() => setEmployeeEntriesModal({
+                          employeeId: entry.employeeId,
+                          employeeName: entry.employeeName,
+                          entries: entry.entries,
+                        })}
+                      >
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
-                            {entry.isEdited && (
-                              <span className="text-lg text-amber-500" title="Edited">
+                            {entry.hasEdited && (
+                              <span className="text-lg text-amber-500" title="Contains edited entries">
                                 !
                               </span>
                             )}
-                            <span className="font-semibold">{entry.employeeName}</span>
+                            <span className="font-semibold text-[var(--accent)]">{entry.employeeName}</span>
                           </div>
                         </td>
-                        <td className="px-4 py-3 text-[var(--muted)]">{entry.attendanceDays}</td>
-                        <td className="px-4 py-3 text-[var(--muted)]">{entry.halfDays}</td>
-                        <td className="px-4 py-3 text-[var(--muted)]">{entry.absentDays}</td>
-                        <td className="px-4 py-3 font-semibold text-[var(--foreground)]">{formatMoney(entry.basePay)}</td>
-                        <td className="px-4 py-3 text-[var(--muted)]">{formatMoney(entry.addedValue)}</td>
-                        <td className="px-4 py-3 text-[var(--muted)]">{formatMoney(entry.subtractedValue)}</td>
-                        <td className="px-4 py-3 font-bold text-[var(--accent)]">{formatMoney(entry.netPay)}</td>
+                        <td className="px-4 py-3 font-semibold text-[var(--foreground)]">{formatMoney(selectedPayrollDetail.basePayPerDay)}</td>
+                        <td className="px-4 py-3 text-[var(--muted)]">{formatMoney(entry.totalAdded)}</td>
+                        <td className="px-4 py-3 text-[var(--muted)]">{formatMoney(entry.totalSubtracted)}</td>
+                        <td className="px-4 py-3 font-bold text-[var(--accent)]">{formatMoney(entry.totalNetPay)}</td>
                         <td className="px-4 py-3">
                           <span
-                            className={`rounded-full px-3 py-1 text-xs font-semibold ${entry.isEdited ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}
+                            className={`rounded-full px-3 py-1 text-xs font-semibold ${entry.hasEdited ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}
                           >
-                            {entry.isEdited ? "Edited" : "Generated"}
+                            {entry.hasEdited ? "Edited" : "Generated"}
                           </span>
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditModal({
-                                employeeId: entry.employeeId,
-                                employeeName: entry.employeeName,
-                                attendanceDays: entry.attendanceDays,
-                                halfDays: entry.halfDays,
-                                absentDays: entry.absentDays,
-                                addedValue: entry.addedValue,
-                                subtractedValue: entry.subtractedValue,
-                                netPay: entry.netPay,
-                                basePay: entry.basePay,
-                                basePayPerDay:
-                                  entry.basePay /
-                                    (entry.attendanceDays + entry.halfDays * 0.5) || null,
-                                isEdited: entry.isEdited,
-                              })
-                              setEditingEntryId(entry.id)
-                              setEditingPayrollId(selectedPayrollDetail?.id || null)
-                            }}
-                            className="rounded-lg border border-[var(--accent)] bg-white px-3 py-1 text-xs font-semibold text-[var(--accent)] transition hover:bg-[var(--accent)]/10"
-                          >
-                            Edit
-                          </button>
                         </td>
                       </tr>
                     ))}
@@ -1231,7 +1268,7 @@ export default function PayrollPage() {
               </div>
               <div className="flex items-center justify-between border-t border-[var(--border)] bg-white/90 px-4 py-3 text-sm text-[var(--muted)]">
                 <span className="text-xs">
-                  {selectedPayrollDetail.entries.length} payroll entry(ies)
+                  {aggregatedPayrollEntries.length} employee(s)
                 </span>
               </div>
             </div>
@@ -1260,60 +1297,6 @@ export default function PayrollPage() {
               </div>
 
               <div className="mt-4 space-y-4">
-                <div className="grid grid-cols-3 gap-3">
-                  <div>
-                    <label className="text-xs font-semibold text-[var(--muted)]">
-                      Full Days
-                    </label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={editModal.attendanceDays}
-                      onChange={(e) =>
-                        setEditModal({
-                          ...editModal,
-                          attendanceDays: parseInt(e.target.value) || 0,
-                        })
-                      }
-                      className="mt-1 w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs font-semibold text-[var(--muted)]">
-                      Half Days
-                    </label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={editModal.halfDays}
-                      onChange={(e) =>
-                        setEditModal({
-                          ...editModal,
-                          halfDays: parseInt(e.target.value) || 0,
-                        })
-                      }
-                      className="mt-1 w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs font-semibold text-[var(--muted)]">
-                      Absent Days
-                    </label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={editModal.absentDays}
-                      onChange={(e) =>
-                        setEditModal({
-                          ...editModal,
-                          absentDays: parseInt(e.target.value) || 0,
-                        })
-                      }
-                      className="mt-1 w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
-                    />
-                  </div>
-                </div>
-
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-xs font-semibold text-[var(--muted)]">
@@ -1509,6 +1492,109 @@ export default function PayrollPage() {
                   >
                     {updatingBasePay ? "Saving..." : "Save base pay and continue"}
                   </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {employeeEntriesModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
+            <div className="w-full max-w-5xl max-h-[90vh] overflow-hidden rounded-3xl bg-white p-6 shadow-[0_28px_80px_rgba(16,40,94,0.24)]">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.28em] text-[var(--muted)]">
+                    Employee Payroll Entries
+                  </p>
+                  <h3 className="text-xl font-semibold text-[var(--foreground)]">
+                    {employeeEntriesModal.employeeName}
+                  </h3>
+                  <p className="text-sm text-[var(--muted)]">
+                    {employeeEntriesModal.entries.length} day(s) in this payroll period
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEmployeeEntriesModal(null)}
+                  className="rounded-full border border-[var(--border)] px-3 py-1 text-sm font-semibold text-[var(--muted)] transition hover:border-[var(--accent)] hover:text-[var(--foreground)]"
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="mt-4 overflow-hidden rounded-2xl border border-[var(--border)]">
+                <div className="overflow-x-auto max-h-[60vh]">
+                  <table className="min-w-[900px] w-full text-sm">
+                    <thead className="bg-[var(--surface)] text-[var(--muted)] sticky top-0">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">
+                          Date
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">
+                          Base Pay
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">
+                          Added (+)
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">
+                          Subtracted (-)
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">
+                          Net Pay
+                        </th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">
+                          Edited
+                        </th>
+                        <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-[0.24em]">
+                          Actions
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[var(--border)]/70 text-[var(--foreground)]">
+                      {employeeEntriesModal.entries.map((entry) => (
+                        <tr key={entry.id} className="hover:bg-[var(--surface)]/60">
+                          <td className="px-4 py-3 font-semibold">{entry.date ?? "-"}</td>
+                          <td className="px-4 py-3">{formatMoney(entry.basePay)}</td>
+                          <td className="px-4 py-3 text-[var(--muted)]">{formatMoney(entry.addedValue)}</td>
+                          <td className="px-4 py-3 text-[var(--muted)]">{formatMoney(entry.subtractedValue)}</td>
+                          <td className="px-4 py-3 font-bold text-[var(--accent)]">{formatMoney(entry.netPay)}</td>
+                          <td className="px-4 py-3">
+                            <span
+                              className={`rounded-full px-3 py-1 text-xs font-semibold ${entry.isEdited ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}
+                            >
+                              {entry.isEdited ? "Edited" : "Generated"}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditModal({
+                                  employeeId: employeeEntriesModal.employeeId,
+                                  employeeName: employeeEntriesModal.employeeName,
+                                  attendanceDays: 0,
+                                  halfDays: 0,
+                                  absentDays: 0,
+                                  addedValue: entry.addedValue,
+                                  subtractedValue: entry.subtractedValue,
+                                  netPay: entry.netPay,
+                                  basePay: entry.basePay,
+                                  basePayPerDay: null,
+                                  isEdited: entry.isEdited,
+                                })
+                                setEditingEntryId(entry.id)
+                                setEditingPayrollId(selectedPayrollDetail?.id || null)
+                                setEmployeeEntriesModal(null)
+                              }}
+                              className="rounded-lg border border-[var(--accent)] bg-white px-3 py-1 text-xs font-semibold text-[var(--accent)] transition hover:bg-[var(--accent)]/10"
+                            >
+                              Edit
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </div>

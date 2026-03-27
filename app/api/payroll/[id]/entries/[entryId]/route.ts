@@ -31,10 +31,50 @@ export async function PATCH(request: Request, { params }: Params) {
     }
     const body = (await request.json()) as UpdateEntryRequest;
 
+    const existingEntry = await prisma.payrollEntry.findUnique({
+      where: { id: entryInt },
+      include: { payroll: true },
+    });
+
+    if (!existingEntry) {
+      return NextResponse.json({ ok: false, error: "Entry not found" }, { status: 404 });
+    }
+
+    const attendanceDays = body.attendanceDays ?? existingEntry.attendanceDays;
+    const halfDays = body.halfDays ?? existingEntry.halfDays;
+    const absentDays = body.absentDays ?? existingEntry.absentDays;
+    const addedValue = body.addedValue ?? existingEntry.addedValue;
+    const subtractedValue = body.subtractedValue ?? existingEntry.subtractedValue;
+
+    const basePayPerDay = existingEntry.payroll.basePayPerDay;
+    const originalBasePay = existingEntry.basePay;
+
+    const isOnlyDaysUpdate = 
+      body.attendanceDays !== undefined ||
+      body.halfDays !== undefined ||
+      body.absentDays !== undefined;
+
+    let newBasePay: number;
+    let newNetPay: number;
+
+    if (isOnlyDaysUpdate && body.addedValue === undefined && body.subtractedValue === undefined) {
+      newBasePay = originalBasePay;
+      newNetPay = originalBasePay + addedValue - subtractedValue;
+    } else {
+      newBasePay = attendanceDays * basePayPerDay + halfDays * basePayPerDay * 0.5;
+      newNetPay = newBasePay + addedValue - subtractedValue;
+    }
+
     const updatedEntry = await prisma.payrollEntry.update({
       where: { id: entryInt },
       data: {
-        ...body,
+        attendanceDays,
+        halfDays,
+        absentDays,
+        basePay: newBasePay,
+        addedValue,
+        subtractedValue,
+        netPay: newNetPay,
         isEdited: true,
       },
     });

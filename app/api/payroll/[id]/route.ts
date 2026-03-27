@@ -24,6 +24,7 @@ export async function GET(request: Request, { params }: Params) {
         entries: {
           include: {
             employee: true,
+            timesheetRow: true,
           },
         },
       },
@@ -40,6 +41,10 @@ export async function GET(request: Request, { params }: Params) {
       id: entry.id,
       employeeId: entry.employeeId,
       employeeName: entry.employee.employeeName,
+      timesheetRowId: entry.timesheetRowId,
+      date: entry.timesheetRow?.date 
+        ? entry.timesheetRow.date.toISOString().split("T")[0]
+        : null,
       attendanceDays: entry.attendanceDays,
       halfDays: entry.halfDays,
       absentDays: entry.absentDays,
