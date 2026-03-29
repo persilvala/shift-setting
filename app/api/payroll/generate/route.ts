@@ -20,6 +20,7 @@ type GeneratePayrollRequest = {
 type PayrollEntryResult = {
   employeeId: string;
   employeeName: string;
+  date: string;
   startDate: string;
   endDate: string;
   attendanceDays: number;
@@ -37,48 +38,51 @@ export async function POST(request: Request) {
     const body = (await request.json()) as GeneratePayrollRequest;
     const { startDate, endDate, basePayPerDay, attendanceData } = body;
 
-    const byEmployee = new Map<string, {
+    const byEmployeeDate = new Map<string, {
       employeeId: string;
       employeeName: string;
+      date: string;
       attendanceDays: number;
       halfDays: number;
       absentDays: number;
     }>();
 
     attendanceData.forEach((entry) => {
-      const key = entry.employeeId;
-      if (!byEmployee.has(key)) {
-        byEmployee.set(key, {
+      const key = `${entry.employeeId}-${entry.date}`;
+      if (!byEmployeeDate.has(key)) {
+        byEmployeeDate.set(key, {
           employeeId: entry.employeeId,
           employeeName: entry.employeeName,
+          date: entry.date,
           attendanceDays: 0,
           halfDays: 0,
           absentDays: 0,
         });
       }
-      const emp = byEmployee.get(key)!;
+      const emp = byEmployeeDate.get(key)!;
       switch (entry.attendanceStatus) {
         case "full_day":
-          emp.attendanceDays++;
+          emp.attendanceDays = 1;
           break;
         case "half_day":
-          emp.halfDays++;
+          emp.halfDays = 1;
           break;
         case "absent":
-          emp.absentDays++;
+          emp.absentDays = 1;
           break;
       }
     });
 
-    const payroll: PayrollEntryResult[] = Array.from(byEmployee.values()).map((emp) => {
+    const payroll: PayrollEntryResult[] = Array.from(byEmployeeDate.values()).map((emp) => {
       const basePay = (emp.attendanceDays * basePayPerDay) + (emp.halfDays * basePayPerDay * 0.5);
       const netPay = basePay;
 
       return {
         employeeId: emp.employeeId,
         employeeName: emp.employeeName,
-        startDate,
-        endDate,
+        date: emp.date,
+        startDate: emp.date,
+        endDate: emp.date,
         attendanceDays: emp.attendanceDays,
         halfDays: emp.halfDays,
         absentDays: emp.absentDays,

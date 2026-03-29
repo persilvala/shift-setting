@@ -10,8 +10,13 @@ export async function GET(request: Request) {
       return NextResponse.json({ exists: false });
     }
 
+    const timesheetIdNum = Number(timesheetId);
+    if (!Number.isFinite(timesheetIdNum)) {
+      return NextResponse.json({ exists: false });
+    }
+
     const existing = await prisma.payroll.findFirst({
-      where: { timesheetId },
+      where: { timesheetId: timesheetIdNum },
       select: {
         id: true,
         startDate: true,

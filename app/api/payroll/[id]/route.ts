@@ -53,6 +53,11 @@ export async function GET(request: Request, { params }: Params) {
       subtractedValue: entry.subtractedValue,
       netPay: entry.netPay,
       isEdited: entry.isEdited,
+      note: entry.note,
+      noteCreatedBy: entry.noteCreatedBy,
+      noteCreatedAt: entry.noteCreatedAt?.toISOString() ?? null,
+      noteEditedBy: entry.noteEditedBy,
+      noteEditedAt: entry.noteEditedAt?.toISOString() ?? null,
     }));
 
     return NextResponse.json({

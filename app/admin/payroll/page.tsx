@@ -14,6 +14,8 @@ import type {
 type PayrollEntryRow = {
   employeeId: string
   employeeName: string
+  date: string
+  timesheetRowId: string | number | null
   startDate: string
   endDate: string
   attendanceDays: number
@@ -25,7 +27,6 @@ type PayrollEntryRow = {
   subtractedValue: number
   netPay: number
   isEdited: boolean
-  timesheetRowIds: (string | number)[]
 }
 
 type PayrollData = {
@@ -37,10 +38,11 @@ type PayrollData = {
 type AttendanceAggregate = {
   employeeId: string
   employeeName: string
+  date: string
   attendanceDays: number
   halfDays: number
   absentDays: number
-  timesheetRowIds: (string | number)[]
+  timesheetRowId: string | number | null
 }
 
 type EmployeeInRange = {
@@ -52,42 +54,42 @@ type EmployeeInRange = {
 function buildAttendanceData(rows: ParsedTimesheetRow[]): AttendanceAggregate[] {
   type WorkingRow = AttendanceAggregate
 
-  const byEmployee = new Map<string, WorkingRow>()
+  const byEmployeeDate = new Map<string, WorkingRow>()
 
   rows.forEach((row) => {
-    const key = String(row.employeeId || row.employeeName || "")
-    if (!key) return
+    const employeeKey = String(row.employeeId || row.employeeName || "")
+    const dateKey = row.date || "unknown"
+    const key = `${employeeKey}-${dateKey}`
+    if (!employeeKey || !dateKey) return
 
-    if (!byEmployee.has(key)) {
-      byEmployee.set(key, {
-        employeeId: String(row.employeeId || key),
+    if (!byEmployeeDate.has(key)) {
+      byEmployeeDate.set(key, {
+        employeeId: String(row.employeeId || employeeKey),
         employeeName: row.employeeName || "Unnamed",
+        date: dateKey,
         attendanceDays: 0,
         halfDays: 0,
         absentDays: 0,
-        timesheetRowIds: [],
+        timesheetRowId: row.id ? String(row.id) : null,
       })
     }
 
-    const entry = byEmployee.get(key)!
-    if (row.id) {
-      entry.timesheetRowIds.push(row.id)
-    }
+    const entry = byEmployeeDate.get(key)!
     const status = row.attendanceStatus || "full_day"
     switch (status) {
       case "full_day":
-        entry.attendanceDays++
+        entry.attendanceDays = 1
         break
       case "half_day":
-        entry.halfDays++
+        entry.halfDays = 1
         break
       case "absent":
-        entry.absentDays++
+        entry.absentDays = 1
         break
     }
   })
 
-  return Array.from(byEmployee.values())
+  return Array.from(byEmployeeDate.values())
 }
 
 const formatMoney = (value: number) => `$${value.toFixed(2)}`
@@ -164,6 +166,11 @@ export default function PayrollPage() {
       subtractedValue: number
       netPay: number
       isEdited: boolean
+      note: string | null
+      noteCreatedBy: string | null
+      noteCreatedAt: string | null
+      noteEditedBy: string | null
+      noteEditedAt: string | null
     }>
   } | null>(null)
 
@@ -173,6 +180,9 @@ export default function PayrollPage() {
     entries: Array<{
       id: string
       date: string | null
+      attendanceDays: number
+      halfDays: number
+      absentDays: number
       basePay: number
       addedValue: number
       subtractedValue: number
@@ -183,6 +193,21 @@ export default function PayrollPage() {
 
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null)
   const [editingPayrollId, setEditingPayrollId] = useState<string | null>(null)
+
+  const [noteModalData, setNoteModalData] = useState<{
+    payrollId: string
+    entryId: string
+    employeeId: string
+    employeeName: string
+    note: string | null
+    noteCreatedBy: string | null
+    noteCreatedAt: string | null
+    noteEditedBy: string | null
+    noteEditedAt: string | null
+  } | null>(null)
+  const [isEditingNote, setIsEditingNote] = useState(false)
+  const [noteText, setNoteText] = useState("")
+  const [savingNote, setSavingNote] = useState(false)
 
   const PAGE_SIZE = 10
 
@@ -269,14 +294,27 @@ export default function PayrollPage() {
       totalSubtracted: number
       totalNetPay: number
       hasEdited: boolean
+      note: string | null
+      noteCreatedBy: string | null
+      noteCreatedAt: string | null
+      noteEditedBy: string | null
+      noteEditedAt: string | null
       entries: Array<{
         id: string
         date: string | null
+        attendanceDays: number
+        halfDays: number
+        absentDays: number
         basePay: number
         addedValue: number
         subtractedValue: number
         netPay: number
         isEdited: boolean
+        note: string | null
+        noteCreatedBy: string | null
+        noteCreatedAt: string | null
+        noteEditedBy: string | null
+        noteEditedAt: string | null
       }>
     }>()
 
@@ -291,6 +329,11 @@ export default function PayrollPage() {
           totalSubtracted: 0,
           totalNetPay: 0,
           hasEdited: false,
+          note: entry.note,
+          noteCreatedBy: entry.noteCreatedBy,
+          noteCreatedAt: entry.noteCreatedAt,
+          noteEditedBy: entry.noteEditedBy,
+          noteEditedAt: entry.noteEditedAt,
           entries: [],
         })
       }
@@ -300,14 +343,29 @@ export default function PayrollPage() {
       group.totalSubtracted += entry.subtractedValue
       group.totalNetPay += entry.netPay
       if (entry.isEdited) group.hasEdited = true
+      if (entry.note) {
+        group.note = entry.note
+        group.noteCreatedBy = entry.noteCreatedBy
+        group.noteCreatedAt = entry.noteCreatedAt
+        group.noteEditedBy = entry.noteEditedBy
+        group.noteEditedAt = entry.noteEditedAt
+      }
       group.entries.push({
         id: entry.id,
         date: entry.date,
+        attendanceDays: entry.attendanceDays,
+        halfDays: entry.halfDays,
+        absentDays: entry.absentDays,
         basePay: entry.basePay,
         addedValue: entry.addedValue,
         subtractedValue: entry.subtractedValue,
         netPay: entry.netPay,
         isEdited: entry.isEdited,
+        note: entry.note,
+        noteCreatedBy: entry.noteCreatedBy,
+        noteCreatedAt: entry.noteCreatedAt,
+        noteEditedBy: entry.noteEditedBy,
+        noteEditedAt: entry.noteEditedAt,
       })
     })
 
@@ -397,16 +455,57 @@ export default function PayrollPage() {
     setSavedPage(1)
   }, [savedPayrolls.length])
 
-  const payrollTotalPages = payrollData
-    ? Math.max(1, Math.ceil(payrollData.payroll.length / PAGE_SIZE))
-    : 1
+  // Aggregate payrollData by employee for the generated summary
+  const aggregatedGeneratedPayroll = useMemo(() => {
+    if (!payrollData) return []
+    const grouped = new Map<string, {
+      employeeId: string
+      employeeName: string
+      basePayPerDay: number
+      totalAttendanceDays: number
+      totalHalfDays: number
+      totalAbsentDays: number
+      totalBasePay: number
+      totalAdded: number
+      totalSubtracted: number
+      totalNetPay: number
+    }>()
+
+    payrollData.payroll.forEach((entry) => {
+      const key = entry.employeeId
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          employeeId: entry.employeeId,
+          employeeName: entry.employeeName,
+          basePayPerDay: entry.basePayPerDay ?? 0,
+          totalAttendanceDays: 0,
+          totalHalfDays: 0,
+          totalAbsentDays: 0,
+          totalBasePay: 0,
+          totalAdded: 0,
+          totalSubtracted: 0,
+          totalNetPay: 0,
+        })
+      }
+      const group = grouped.get(key)!
+      group.totalAttendanceDays += entry.attendanceDays
+      group.totalHalfDays += entry.halfDays
+      group.totalAbsentDays += entry.absentDays
+      group.totalBasePay += entry.basePay
+      group.totalAdded += entry.addedValue
+      group.totalSubtracted += entry.subtractedValue
+      group.totalNetPay += entry.netPay
+    })
+
+    return Array.from(grouped.values()).sort((a, b) => a.employeeName.localeCompare(b.employeeName))
+  }, [payrollData])
+
+  const payrollTotalPages = Math.max(1, Math.ceil(aggregatedGeneratedPayroll.length / PAGE_SIZE))
   const payrollPageSafe = Math.min(payrollPage, payrollTotalPages)
-  const paginatedPayroll = payrollData
-    ? payrollData.payroll.slice(
-        (payrollPageSafe - 1) * PAGE_SIZE,
-        payrollPageSafe * PAGE_SIZE,
-      )
-    : []
+  const paginatedPayroll = aggregatedGeneratedPayroll.slice(
+    (payrollPageSafe - 1) * PAGE_SIZE,
+    payrollPageSafe * PAGE_SIZE,
+  )
 
   const savedTotalPages = savedPayrolls.length
     ? Math.max(1, Math.ceil(savedPayrolls.length / PAGE_SIZE))
@@ -433,8 +532,10 @@ export default function PayrollPage() {
         return {
           employeeId: emp.employeeId,
           employeeName: emp.employeeName,
-          startDate,
-          endDate,
+          date: emp.date,
+          timesheetRowId: emp.timesheetRowId,
+          startDate: emp.date,
+          endDate: emp.date,
           attendanceDays: emp.attendanceDays,
           halfDays: emp.halfDays,
           absentDays: emp.absentDays,
@@ -444,7 +545,6 @@ export default function PayrollPage() {
           subtractedValue: 0,
           netPay: Math.round(netPay * 100) / 100,
           isEdited: false,
-          timesheetRowIds: emp.timesheetRowIds,
         }
       })
 
@@ -454,7 +554,7 @@ export default function PayrollPage() {
       addAdminLog({
         action: "Payroll generation",
         status: "Success",
-        description: `Generated payroll for ${payroll.length} employee(s)`,
+        description: `Generated payroll for ${payroll.length} entry(ies)`,
       })
     },
     [endDate, getEmployeeBasePay, startDate],
@@ -516,7 +616,17 @@ export default function PayrollPage() {
       }
 
       const aggregated = buildAttendanceData(scopedRows)
-      const employeesWithoutBasePay = aggregated.filter((emp) => {
+
+      // Group by unique employee to check for missing base pay (not per-date)
+      const uniqueEmployees = new Map<string, AttendanceAggregate>()
+      aggregated.forEach((emp) => {
+        const key = emp.employeeId || emp.employeeName
+        if (!uniqueEmployees.has(key)) {
+          uniqueEmployees.set(key, emp)
+        }
+      })
+
+      const employeesWithoutBasePay = Array.from(uniqueEmployees.values()).filter((emp) => {
         const basePay = getEmployeeBasePay(emp.employeeId, emp.employeeName)
         return basePay === null
       })
@@ -612,7 +722,16 @@ export default function PayrollPage() {
       setBulkBasePay("")
 
       if (pendingAggregation) {
-        const stillMissing = pendingAggregation.filter((emp) => {
+        // Group by unique employee to check for still missing
+        const uniquePending = new Map<string, AttendanceAggregate>()
+        pendingAggregation.forEach((emp) => {
+          const key = emp.employeeId || emp.employeeName
+          if (!uniquePending.has(key)) {
+            uniquePending.set(key, emp)
+          }
+        })
+
+        const stillMissing = Array.from(uniquePending.values()).filter((emp) => {
           const basePay = getEmployeeBasePay(
             emp.employeeId,
             emp.employeeName,
@@ -651,11 +770,14 @@ export default function PayrollPage() {
       return
     }
 
-    const missingBasePay = payrollData.payroll.filter(
-      (p) => p.basePayPerDay === null || p.basePayPerDay === undefined,
-    )
-    if (missingBasePay.length > 0) {
-      const names = missingBasePay.map((e) => e.employeeName).join(", ")
+    const missingBasePayEmployees = new Set<string>()
+    payrollData.payroll.forEach((p) => {
+      if (p.basePayPerDay === null || p.basePayPerDay === undefined) {
+        missingBasePayEmployees.add(p.employeeName)
+      }
+    })
+    if (missingBasePayEmployees.size > 0) {
+      const names = Array.from(missingBasePayEmployees).join(", ")
       setError(`Cannot save: Missing base pay for ${names}`)
       addAdminLog({
         action: "Payroll save",
@@ -670,44 +792,27 @@ export default function PayrollPage() {
     setSuccess(null)
 
     try {
-      const rowLevelEntries = payrollData.payroll.flatMap((emp) => {
-        if (!emp.timesheetRowIds.length) {
-          return [
-            {
-              employeeId: emp.employeeId,
-              employeeName: emp.employeeName,
-              timesheetRowId: "",
-              basePayPerDay: emp.basePayPerDay,
-              attendanceDays: emp.attendanceDays,
-              halfDays: emp.halfDays,
-              absentDays: emp.absentDays,
-              basePay: emp.basePay,
-              addedValue: emp.addedValue,
-              subtractedValue: emp.subtractedValue,
-              netPay: emp.netPay,
-            },
-          ]
-        }
-        return emp.timesheetRowIds.map((rowId) => ({
-          employeeId: emp.employeeId,
-          employeeName: emp.employeeName,
-          timesheetRowId: rowId,
-          basePayPerDay: emp.basePayPerDay,
-          attendanceDays: emp.attendanceDays,
-          halfDays: emp.halfDays,
-          absentDays: emp.absentDays,
-          basePay: emp.basePay / emp.timesheetRowIds.length,
-          addedValue: emp.addedValue / emp.timesheetRowIds.length,
-          subtractedValue: emp.subtractedValue / emp.timesheetRowIds.length,
-          netPay: emp.netPay / emp.timesheetRowIds.length,
-        }))
-      })
+      const rowLevelEntries = payrollData.payroll.map((emp) => ({
+        employeeId: emp.employeeId,
+        employeeName: emp.employeeName,
+        timesheetRowId: emp.timesheetRowId || "",
+        basePayPerDay: emp.basePayPerDay,
+        attendanceDays: emp.attendanceDays,
+        halfDays: emp.halfDays,
+        absentDays: emp.absentDays,
+        basePay: emp.basePay,
+        addedValue: emp.addedValue,
+        subtractedValue: emp.subtractedValue,
+        netPay: emp.netPay,
+      }))
 
-      const avgBasePay =
-        payrollData.payroll.reduce(
-          (sum, p) => sum + (p.basePayPerDay ?? 0),
-          0,
-        ) / payrollData.payroll.length
+      const employeeBasePayMap = new Map<string, number>()
+      payrollData.payroll.forEach((p) => {
+        if (p.basePayPerDay !== null && p.basePayPerDay !== undefined) {
+          employeeBasePayMap.set(p.employeeId, p.basePayPerDay)
+        }
+      })
+      const avgBasePay = Array.from(employeeBasePayMap.values()).reduce((sum, val) => sum + val, 0) / employeeBasePayMap.size || 0
 
       const response = await fetch("/api/payroll", {
         method: "POST",
@@ -782,28 +887,42 @@ export default function PayrollPage() {
         )
 
         if (response.ok) {
+          const updatedEntry = {
+            attendanceDays: editModal.attendanceDays,
+            halfDays: editModal.halfDays,
+            absentDays: editModal.absentDays,
+            addedValue: editModal.addedValue,
+            subtractedValue: editModal.subtractedValue,
+            basePay: Math.round(newBasePay * 100) / 100,
+            netPay: Math.round(newNetPay * 100) / 100,
+            isEdited: true,
+          }
+
           setSelectedPayrollDetail((prev) => {
             if (!prev) return prev
             return {
               ...prev,
               isEdited: true,
               entries: prev.entries.map((entry) =>
-                entry.id === editingEntryId
-                  ? {
-                      ...entry,
-                      attendanceDays: editModal.attendanceDays,
-                      halfDays: editModal.halfDays,
-                      absentDays: editModal.absentDays,
-                      addedValue: editModal.addedValue,
-                      subtractedValue: editModal.subtractedValue,
-                      basePay: Math.round(newBasePay * 100) / 100,
-                      netPay: Math.round(newNetPay * 100) / 100,
-                      isEdited: true,
-                    }
-                  : entry,
+                entry.id === editingEntryId ? { ...entry, ...updatedEntry } : entry,
               ),
             }
           })
+
+          // Re-open employee entries modal with updated data
+          if (selectedPayrollDetail) {
+            const employeeEntries = selectedPayrollDetail.entries
+              .filter((e) => e.employeeId === editModal.employeeId)
+              .map((entry) =>
+                entry.id === editingEntryId ? { ...entry, ...updatedEntry } : entry,
+              )
+            setEmployeeEntriesModal({
+              employeeId: editModal.employeeId,
+              employeeName: editModal.employeeName,
+              entries: employeeEntries,
+            })
+          }
+
           addAdminLog({
             action: "Payroll entry edit",
             status: "Success",
@@ -1045,16 +1164,16 @@ export default function PayrollPage() {
                         Name
                       </th>
                       <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">
-                        Full Days
-                      </th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">
-                        Half Days
-                      </th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">
-                        Absent Days
+                        Total Days
                       </th>
                       <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">
                         Base Pay
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">
+                        Added (+)
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">
+                        Subtracted (-)
                       </th>
                       <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">
                         Net Pay
@@ -1065,14 +1184,16 @@ export default function PayrollPage() {
                     {paginatedPayroll.map((entry) => (
                       <tr key={entry.employeeId} className="hover:bg-[var(--surface)]/60">
                         <td className="px-4 py-3 font-semibold">{entry.employeeName}</td>
-                        <td className="px-4 py-3 text-[var(--muted)]">{entry.attendanceDays}</td>
-                        <td className="px-4 py-3 text-[var(--muted)]">{entry.halfDays}</td>
-                        <td className="px-4 py-3 text-[var(--muted)]">{entry.absentDays}</td>
-                        <td className="px-4 py-3 font-semibold text-[var(--foreground)]">
-                          {formatMoney(entry.basePay)}
+                        <td className="px-4 py-3 text-[var(--muted)]">
+                          {entry.totalAttendanceDays + entry.totalHalfDays + entry.totalAbsentDays}
                         </td>
+                        <td className="px-4 py-3 font-semibold text-[var(--foreground)]">
+                          {formatMoney(entry.basePayPerDay)}
+                        </td>
+                        <td className="px-4 py-3 text-[var(--muted)]">{formatMoney(entry.totalAdded)}</td>
+                        <td className="px-4 py-3 text-[var(--muted)]">{formatMoney(entry.totalSubtracted)}</td>
                         <td className="px-4 py-3 font-bold text-[var(--accent)]">
-                          {formatMoney(entry.netPay)}
+                          {formatMoney(entry.totalNetPay)}
                         </td>
                       </tr>
                     ))}
@@ -1085,7 +1206,7 @@ export default function PayrollPage() {
                   totalPages={payrollTotalPages}
                   onChange={setPayrollPage}
                 />
-                <span className="text-xs">{payrollData.payroll.length} payroll row(s)</span>
+                <span className="text-xs">{aggregatedGeneratedPayroll.length} employee(s)</span>
               </div>
             </div>
           </section>
@@ -1225,6 +1346,9 @@ export default function PayrollPage() {
                         Net Pay
                       </th>
                       <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">
+                        Note
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">
                         Status
                       </th>
                     </tr>
@@ -1250,10 +1374,36 @@ export default function PayrollPage() {
                             <span className="font-semibold text-[var(--accent)]">{entry.employeeName}</span>
                           </div>
                         </td>
-                        <td className="px-4 py-3 font-semibold text-[var(--foreground)]">{formatMoney(selectedPayrollDetail.basePayPerDay)}</td>
+                        <td className="px-4 py-3 font-semibold text-[var(--foreground)]">{formatMoney(entry.totalBasePay)}</td>
                         <td className="px-4 py-3 text-[var(--muted)]">{formatMoney(entry.totalAdded)}</td>
                         <td className="px-4 py-3 text-[var(--muted)]">{formatMoney(entry.totalSubtracted)}</td>
                         <td className="px-4 py-3 font-bold text-[var(--accent)]">{formatMoney(entry.totalNetPay)}</td>
+                        <td className="px-4 py-3">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setNoteModalData({
+                                payrollId: selectedPayrollDetail?.id ?? "",
+                                entryId: entry.entries[0]?.id ?? "",
+                                employeeId: entry.employeeId,
+                                employeeName: entry.employeeName,
+                                note: entry.note,
+                                noteCreatedBy: entry.noteCreatedBy,
+                                noteCreatedAt: entry.noteCreatedAt,
+                                noteEditedBy: entry.noteEditedBy,
+                                noteEditedAt: entry.noteEditedAt,
+                              })
+                            }}
+                            className={`rounded-lg px-3 py-1 text-xs font-semibold transition ${
+                              entry.note
+                                ? "bg-blue-100 text-blue-700 hover:bg-blue-200"
+                                : "border border-[var(--border)] text-[var(--muted)] hover:border-blue-300 hover:text-blue-600"
+                            }`}
+                          >
+                            {entry.note ? "📝" : "Add Note"}
+                          </button>
+                        </td>
                         <td className="px-4 py-3">
                           <span
                             className={`rounded-full px-3 py-1 text-xs font-semibold ${entry.hasEdited ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}
@@ -1569,17 +1719,21 @@ export default function PayrollPage() {
                             <button
                               type="button"
                               onClick={() => {
+                                // Calculate basePayPerDay from entry's basePay and days
+                                const days = entry.attendanceDays + (entry.halfDays * 0.5)
+                                const calculatedBasePayPerDay = days > 0 ? entry.basePay / days : (selectedPayrollDetail?.basePayPerDay ?? null)
+                                
                                 setEditModal({
                                   employeeId: employeeEntriesModal.employeeId,
                                   employeeName: employeeEntriesModal.employeeName,
-                                  attendanceDays: 0,
-                                  halfDays: 0,
-                                  absentDays: 0,
+                                  attendanceDays: entry.attendanceDays,
+                                  halfDays: entry.halfDays,
+                                  absentDays: entry.absentDays,
                                   addedValue: entry.addedValue,
                                   subtractedValue: entry.subtractedValue,
                                   netPay: entry.netPay,
                                   basePay: entry.basePay,
-                                  basePayPerDay: null,
+                                  basePayPerDay: calculatedBasePayPerDay,
                                   isEdited: entry.isEdited,
                                 })
                                 setEditingEntryId(entry.id)
@@ -1596,6 +1750,169 @@ export default function PayrollPage() {
                     </tbody>
                   </table>
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {noteModalData && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
+            <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-[0_28px_80px_rgba(16,40,94,0.24)]">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.28em] text-[var(--muted)]">
+                    Employee Note
+                  </p>
+                  <h3 className="text-xl font-semibold text-[var(--foreground)]">
+                    {noteModalData.employeeName}
+                  </h3>
+                </div>
+                {!isEditingNote && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsEditingNote(true)
+                      setNoteText(noteModalData.note ?? "")
+                    }}
+                    className="rounded-lg border border-[var(--accent)] bg-white px-3 py-1 text-xs font-semibold text-[var(--accent)] transition hover:bg-[var(--accent)]/10"
+                  >
+                    Edit
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNoteModalData(null)
+                    setIsEditingNote(false)
+                    setNoteText("")
+                  }}
+                  className="rounded-full border border-[var(--border)] px-3 py-1 text-sm font-semibold text-[var(--muted)] transition hover:border-[var(--accent)] hover:text-[var(--foreground)]"
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="mt-4 space-y-4">
+                {noteModalData.noteCreatedBy && (
+                  <div className="text-sm text-[var(--muted)]">
+                    {noteModalData.noteEditedBy ? (
+                      <>
+                        Created by: <span className="font-semibold text-[var(--foreground)]">{noteModalData.noteCreatedBy}</span>
+                        {noteModalData.noteCreatedAt && (
+                          <> on {new Date(noteModalData.noteCreatedAt).toLocaleDateString()}</>
+                        )}
+                        <span className="mx-2">|</span>
+                        Edited by: <span className="font-semibold text-[var(--foreground)]">{noteModalData.noteEditedBy}</span>
+                        {noteModalData.noteEditedAt && (
+                          <> on {new Date(noteModalData.noteEditedAt).toLocaleDateString()}</>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        Created by: <span className="font-semibold text-[var(--foreground)]">{noteModalData.noteCreatedBy}</span>
+                        {noteModalData.noteCreatedAt && (
+                          <> on {new Date(noteModalData.noteCreatedAt).toLocaleDateString()}</>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {isEditingNote ? (
+                  <>
+                    <textarea
+                      value={noteText}
+                      onChange={(e) => setNoteText(e.target.value)}
+                      placeholder="Enter note..."
+                      rows={4}
+                      className="w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm resize-none"
+                    />
+                    <div className="flex justify-end gap-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsEditingNote(false)
+                          setNoteText("")
+                        }}
+                        className="rounded-xl border border-[var(--border)] px-4 py-2 text-sm font-semibold text-[var(--muted)] transition hover:border-[var(--accent)] hover:text-[var(--foreground)]"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          setSavingNote(true)
+                          try {
+                            const response = await fetch(
+                              `/api/payroll/${noteModalData.payrollId}/entries/${noteModalData.entryId}/note`,
+                              {
+                                method: "PATCH",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ note: noteText }),
+                              },
+                            )
+                            const result = await response.json()
+
+                            if (result.ok) {
+                              setSelectedPayrollDetail((prev) => {
+                                if (!prev) return prev
+                                return {
+                                  ...prev,
+                                  entries: prev.entries.map((entry) =>
+                                    entry.id === noteModalData.entryId
+                                      ? {
+                                          ...entry,
+                                          note: result.entry.note,
+                                          noteCreatedBy: result.entry.noteCreatedBy,
+                                          noteCreatedAt: result.entry.noteCreatedAt,
+                                          noteEditedBy: result.entry.noteEditedBy,
+                                          noteEditedAt: result.entry.noteEditedAt,
+                                        }
+                                      : entry,
+                                  ),
+                                }
+                              })
+                              setNoteModalData((prev) =>
+                                prev
+                                  ? {
+                                      ...prev,
+                                      note: result.entry.note,
+                                      noteCreatedBy: result.entry.noteCreatedBy,
+                                      noteCreatedAt: result.entry.noteCreatedAt,
+                                      noteEditedBy: result.entry.noteEditedBy,
+                                      noteEditedAt: result.entry.noteEditedAt,
+                                    }
+                                  : null,
+                              )
+                              addAdminLog({
+                                action: "Payroll note",
+                                status: "Success",
+                                description: noteModalData.note
+                                  ? `Edited note for ${noteModalData.employeeName}`
+                                  : `Added note for ${noteModalData.employeeName}`,
+                              })
+                              setIsEditingNote(false)
+                            }
+                          } catch (err) {
+                            console.error("Failed to save note:", err)
+                          } finally {
+                            setSavingNote(false)
+                          }
+                        }}
+                        disabled={savingNote}
+                        className="rounded-xl bg-gradient-to-r from-[var(--accent-strong)] to-[var(--accent)] px-5 py-2 text-sm font-semibold text-white shadow-[0_12px_34px_rgba(47,109,246,0.28)] transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-70"
+                      >
+                        {savingNote ? "Saving..." : "Save"}
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)]/50 p-4 min-h-[100px]">
+                    <p className={`text-sm ${noteModalData.note ? "text-[var(--foreground)]" : "text-[var(--muted)] italic"}`}>
+                      {noteModalData.note || "No note added yet."}
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           </div>

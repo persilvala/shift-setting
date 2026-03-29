@@ -78,7 +78,7 @@ export async function PUT(
     const body = await request.json();
     const rows = (body?.rows ?? []) as IncomingRow[];
 
-    const result = await upsertManualTimesheet({ rows, timesheetId });
+    const result = await upsertManualTimesheet({ rows, timesheetId: String(timesheetId) });
 
     if (!result.ok) {
       return NextResponse.json(

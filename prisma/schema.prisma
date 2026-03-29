@@ -116,6 +116,11 @@ model PayrollEntry {
   netPay          Float    @default(0)
   isEdited        Boolean  @default(false)
   createdAt       DateTime @default(now())
+  note            String?
+  noteCreatedBy   String?
+  noteCreatedAt   DateTime?
+  noteEditedBy    String?
+  noteEditedAt    DateTime?
   payroll         Payroll  @relation(fields: [payrollId], references: [id], onDelete: Cascade)
   timesheetRow    TimesheetRow? @relation(fields: [timesheetRowId], references: [id])
   employee        Employee @relation(fields: [employeeId], references: [id])
