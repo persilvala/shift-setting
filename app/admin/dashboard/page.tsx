@@ -446,97 +446,35 @@ export default function DashboardPage() {
         <section className="rounded-3xl border border-[var(--border)] bg-[var(--panel)]/90 p-6 shadow-[0_18px_50px_rgba(16,40,94,0.08)]">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="text-xs uppercase tracking-[0.26em] text-[var(--muted)]">Payroll visibility</p>
+              <p className="text-xs uppercase tracking-[0.26em] text-[var(--muted)]">Latest payroll</p>
             </div>
-            <span className={`rounded-full px-3 py-1 text-xs font-semibold ${payrollSummary ? "border border-emerald-200 bg-emerald-50 text-emerald-700" : "border border-amber-200 bg-amber-50 text-amber-700"}`}>
-              {payrollSummary ? "Confirmed" : "Awaiting confirmation"}
-            </span>
+            {payrollSummary?.generatedAt && (
+              <span className="text-xs text-[var(--muted)]">
+                Generated {new Date(payrollSummary.generatedAt).toLocaleDateString()}
+              </span>
+            )}
           </div>
 
           {payrollSummary ? (
-            <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="mt-4 grid gap-4 sm:grid-cols-3">
               <div className="rounded-2xl border border-[var(--border)] bg-white p-4 shadow-sm">
-                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Payroll range</p>
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Period</p>
                 <p className="pt-2 text-lg font-semibold text-[var(--foreground)]">{payrollSummary.startDate} → {payrollSummary.endDate}</p>
-                {payrollSummary.generatedAt && <p className="text-xs text-[var(--muted)]">Generated {new Date(payrollSummary.generatedAt).toLocaleString()}</p>}
               </div>
               <div className="rounded-2xl border border-[var(--border)] bg-white p-4 shadow-sm">
-                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Employees paid</p>
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Employees</p>
                 <p className="pt-2 text-2xl font-semibold text-[var(--foreground)]">{payrollSummary.employees}</p>
               </div>
               <div className="rounded-2xl border border-[var(--border)] bg-white p-4 shadow-sm">
-                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Total payroll amount</p>
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Total Payroll</p>
                 <p className="pt-2 text-2xl font-semibold text-[var(--accent)]">{payrollSummary.totalNet ? `$${payrollSummary.totalNet.toFixed(2)}` : "—"}</p>
-              </div>
-              <div className="rounded-2xl border border-[var(--border)] bg-white p-4 shadow-sm">
-                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Shifts included</p>
-                <p className="pt-2 text-2xl font-semibold text-[var(--foreground)]">{payrollSummary.shifts ?? "—"}</p>
               </div>
             </div>
           ) : (
             <div className="mt-4 rounded-2xl border border-dashed border-[var(--border)] bg-[var(--surface)] px-5 py-6 text-sm text-[var(--muted)]">
-              Generate payroll and confirm the modal to display the summary here.
+              No payroll generated yet. Go to Payroll to generate one.
             </div>
           )}
-        </section>
-
-        <section className="rounded-3xl border border-[var(--border)] bg-[var(--panel)]/90 p-6 shadow-[0_24px_70px_rgba(16,40,94,0.1)]">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-xs uppercase tracking-[0.26em] text-[var(--muted)]">Attendance summary</p>
-            </div>
-            <span className="rounded-full border border-[var(--border)] bg-white px-3 py-1 text-xs font-semibold text-[var(--muted)]">Employees: {aggregates.employees}</span>
-          </div>
-
-            <div className="mt-5 overflow-hidden rounded-2xl border border-[var(--border)] bg-white/90 shadow-[0_12px_32px_rgba(16,40,94,0.06)]">
-              <div className="overflow-x-auto">
-                <table className="min-w-[960px] w-full text-sm">
-                <thead className="bg-[var(--surface)] text-[var(--muted)]">
-                  <tr>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Employee</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Dept</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Present</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Dates</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Present</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Leave</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Absent</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Hours</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">OT Hours</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Late (min)</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Undertime (min)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--border)]/70 text-[var(--foreground)]">
-                  {!hasData || paginatedAttendance.length === 0 ? (
-                    <tr>
-                      <td colSpan={9} className="px-4 py-4 text-center text-[var(--muted)]">
-                        {hasData ? "No rows match the current filters." : "Upload a timesheet to populate the dashboard."}
-                      </td>
-                    </tr>
-                  ) : (
-                    paginatedAttendance.map((entry) => (
-                      <tr key={entry.employeeName} className="hover:bg-[var(--surface)]/60">
-                        <td className="px-4 py-3 font-semibold text-[var(--foreground)]">{entry.employeeName}</td>
-                        <td className="px-4 py-3 text-[var(--muted)]">{entry.dept || "—"}</td>
-                        <td className="px-4 py-3 text-[var(--muted)]">{entry.dateLabel}</td>
-                        <td className="px-4 py-3 text-[var(--muted)]">{entry.presentDays}</td>
-                        <td className="px-4 py-3 text-[var(--muted)]">{entry.leaveDays}</td>
-                        <td className="px-4 py-3 text-[var(--muted)]">{entry.absenceDays}</td>
-                        <td className="px-4 py-3 text-[var(--muted)]">{entry.hours.toFixed(2)}</td>
-                        <td className="px-4 py-3 text-[var(--muted)]">{entry.overtime.toFixed(2)}</td>
-                        <td className="px-4 py-3 text-[var(--muted)]">{entry.lateMinutes}</td>
-                        <td className="px-4 py-3 text-[var(--muted)]">{entry.earlyMinutes}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-            <div className="flex items-center justify-between border-t border-[var(--border)] bg-white/90 px-4 py-3 text-sm text-[var(--muted)]">
-              <Pagination page={pageSafe} totalPages={totalPages} onChange={setPage} />
-              <span className="text-xs">{aggregates.attendance.length} employee(s)</span>
-            </div>
-          </div>
         </section>
       </main>
     </div>
