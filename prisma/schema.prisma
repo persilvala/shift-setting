@@ -7,23 +7,23 @@ datasource db {
 }
 
 model Admin {
-  id                 Int      @id @default(autoincrement())
-  username           String   @unique
+  id                 Int       @id @default(autoincrement())
+  username           String    @unique
   passwordHash       String
-  mustChangePassword Boolean  @default(true)
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  mustChangePassword Boolean   @default(true)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
   sessions           Session[]
 }
 
 model Employee {
-  id            Int           @id @default(autoincrement())
-  employeeName  String        @unique
-  basePayPerDay Float?
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
-  timesheetRows TimesheetRow[]
+  id             Int            @id @default(autoincrement())
+  employeeName   String         @unique
+  basePayPerDay  Float?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
   payrollEntries PayrollEntry[]
+  timesheetRows  TimesheetRow[]
 
   @@index([employeeName])
 }
@@ -36,15 +36,15 @@ model Timesheet {
   endDate     DateTime
   totalRows   Int
   uploadedAt  DateTime       @default(now())
-  rows        TimesheetRow[]
-  payrolls    Payroll[]
   entrySource String?        @default("upload")
+  payrolls    Payroll[]
+  rows        TimesheetRow[]
 
   @@index([uploadedAt])
 }
 
 model TimesheetRow {
-  id               Int       @id @default(autoincrement())
+  id               Int            @id @default(autoincrement())
   timesheetId      Int
   employeeId       Int?
   employeeName     String
@@ -74,17 +74,17 @@ model TimesheetRow {
   payrollDeduction Float?
   shiftCode        String?
   remark           String?
-  attendanceStatus String    @default("full_day")
-  createdAt        DateTime  @default(now())
-  timesheet        Timesheet @relation(fields: [timesheetId], references: [id], onDelete: Cascade)
-  employee         Employee? @relation(fields: [employeeId], references: [id])
+  attendanceStatus String         @default("full_day")
+  createdAt        DateTime       @default(now())
   payrollEntries   PayrollEntry[]
+  employee         Employee?      @relation(fields: [employeeId], references: [id])
+  timesheet        Timesheet      @relation(fields: [timesheetId], references: [id], onDelete: Cascade)
 
+  @@unique([employeeId, date])
   @@index([timesheetId])
   @@index([employeeName])
   @@index([employeeId])
   @@index([date])
-  @@unique([employeeId, date])
 }
 
 model Payroll {
@@ -103,27 +103,27 @@ model Payroll {
 }
 
 model PayrollEntry {
-  id              Int      @id @default(autoincrement())
+  id              Int           @id @default(autoincrement())
   payrollId       Int
   timesheetRowId  Int?
   employeeId      Int
-  attendanceDays  Int      @default(0)
-  halfDays        Int      @default(0)
-  absentDays      Int      @default(0)
-  basePay         Float    @default(0)
-  addedValue      Float    @default(0)
-  subtractedValue Float    @default(0)
-  netPay          Float    @default(0)
-  isEdited        Boolean  @default(false)
-  createdAt       DateTime @default(now())
+  attendanceDays  Int           @default(0)
+  halfDays        Int           @default(0)
+  absentDays      Int           @default(0)
+  basePay         Float         @default(0)
+  addedValue      Float         @default(0)
+  subtractedValue Float         @default(0)
+  netPay          Float         @default(0)
+  isEdited        Boolean       @default(false)
+  createdAt       DateTime      @default(now())
   note            String?
   noteCreatedBy   String?
   noteCreatedAt   DateTime?
   noteEditedBy    String?
   noteEditedAt    DateTime?
-  payroll         Payroll  @relation(fields: [payrollId], references: [id], onDelete: Cascade)
+  employee        Employee      @relation(fields: [employeeId], references: [id])
+  payroll         Payroll       @relation(fields: [payrollId], references: [id], onDelete: Cascade)
   timesheetRow    TimesheetRow? @relation(fields: [timesheetRowId], references: [id])
-  employee        Employee @relation(fields: [employeeId], references: [id])
 
   @@index([payrollId])
   @@index([employeeId])

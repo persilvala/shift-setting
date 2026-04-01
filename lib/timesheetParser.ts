@@ -1,5 +1,4 @@
 import * as XLSX from "xlsx";
-import { PDFParse } from "pdf-parse";
 import type { ParsedTimesheetRow } from "@/lib/types";
 
 export type { ParsedTimesheetRow } from "@/lib/types";
@@ -19,7 +18,15 @@ function isLikelyName(value: string | null | undefined) {
   const trimmed = value.trim();
   if (!trimmed) return false;
   const lower = trimmed.toLowerCase();
-  const stopWords = ["before noon", "in", "out", "login", "logout", "time in", "time out"];
+  const stopWords = [
+    "before noon",
+    "in",
+    "out",
+    "login",
+    "logout",
+    "time in",
+    "time out",
+  ];
   if (stopWords.includes(lower)) return false;
   // Reject strings that are only numbers, dashes, or a single character
   if (/^[-0-9.\s]+$/.test(trimmed)) return false;
@@ -36,10 +43,10 @@ const HEADER_MAP: Record<string, NormalizedField> = {
   "full name": "employeeName",
   "staff name": "employeeName",
   "team member": "employeeName",
-  "timein": "timeIn",
-  "timeout": "timeOut",
-  "clockin": "timeIn",
-  "clockout": "timeOut",
+  timein: "timeIn",
+  timeout: "timeOut",
+  clockin: "timeIn",
+  clockout: "timeOut",
 
   date: "date",
   "work date": "date",
@@ -57,7 +64,7 @@ const HEADER_MAP: Record<string, NormalizedField> = {
 
   hours: "hours",
   "total hours": "hours",
-  "hrs": "hours",
+  hrs: "hours",
   "total hrs": "hours",
 };
 
@@ -127,9 +134,10 @@ function parseHoursValue(value: unknown): number | null {
 
   if (typeof value === "string") {
     const cleaned = value.replace(/[^0-9.,-]/g, "");
-    const normalized = cleaned.includes(",") && !cleaned.includes(".")
-      ? cleaned.replace(",", ".")
-      : cleaned;
+    const normalized =
+      cleaned.includes(",") && !cleaned.includes(".")
+        ? cleaned.replace(",", ".")
+        : cleaned;
     const parsed = parseFloat(normalized);
     if (!Number.isNaN(parsed)) {
       return Math.round(parsed * 100) / 100;
@@ -239,7 +247,10 @@ function isLikelyPersonName(value: unknown): boolean {
 }
 
 function norm(value: unknown) {
-  return String(value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  return String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
 }
 
 function excelTimeToMinutes(value: unknown): number | null {
@@ -291,7 +302,9 @@ function formatYMD(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-function sumPairs(pairs: Array<{ inMin: number | null; outMin: number | null }>): number {
+function sumPairs(
+  pairs: Array<{ inMin: number | null; outMin: number | null }>,
+): number {
   let total = 0;
   for (const p of pairs) {
     if (p.inMin == null || p.outMin == null) continue;
@@ -302,8 +315,12 @@ function sumPairs(pairs: Array<{ inMin: number | null; outMin: number | null }>)
   return total;
 }
 
-function parseTimeCardBlocksSheet(rows: (string | number | Date | undefined)[][]): ParseResult | null {
-  const containsTimeCard = rows.some((r) => r.some((c) => norm(c) === "time card"));
+function parseTimeCardBlocksSheet(
+  rows: (string | number | Date | undefined)[][],
+): ParseResult | null {
+  const containsTimeCard = rows.some((r) =>
+    r.some((c) => norm(c) === "time card"),
+  );
   if (!containsTimeCard) return null;
 
   const out: ParsedTimesheetRow[] = [];
@@ -314,20 +331,27 @@ function parseTimeCardBlocksSheet(rows: (string | number | Date | undefined)[][]
 
   // Find Time Card header row and extract metadata
   for (let r = 0; r < Math.min(rows.length, 15); r++) {
-    const rowText = rows[r].map((c) => norm(c)).filter(Boolean).join(" ");
+    const rowText = rows[r]
+      .map((c) => norm(c))
+      .filter(Boolean)
+      .join(" ");
     if (rowText.includes("time card") && rowText.includes("before noon")) {
       // Found header row like: ["Date/Weekday","Before Noon",null,null,null,null,"After Noon",...]
       // Look for employee name and date range in previous rows
       for (let prev = r - 1; prev >= 0; prev--) {
         const prevRow = rows[prev];
         if (prevRow.some((c) => norm(c)?.includes("name"))) {
-          const nameIdx = prevRow.findIndex((c) => norm(c)?.toLowerCase() === "name");
+          const nameIdx = prevRow.findIndex(
+            (c) => norm(c)?.toLowerCase() === "name",
+          );
           if (nameIdx >= 0 && prevRow[nameIdx + 1]) {
             employeeName = stringOrNull(prevRow[nameIdx + 1]) ?? employeeName;
           }
         }
         if (prevRow.some((c) => norm(c)?.includes("date"))) {
-          const dateIdx = prevRow.findIndex((c) => norm(c)?.toLowerCase() === "date");
+          const dateIdx = prevRow.findIndex(
+            (c) => norm(c)?.toLowerCase() === "date",
+          );
           if (dateIdx >= 0 && prevRow[dateIdx + 1]) {
             dateRangeText = prevRow[dateIdx + 1];
             startDate = parseDateRangeStart(dateRangeText);
@@ -347,14 +371,18 @@ function parseTimeCardBlocksSheet(rows: (string | number | Date | undefined)[][]
           // Found Time Card marker, look for employee name and date nearby
           const nameRow = rows[3];
           if (nameRow) {
-            const nameIdx = nameRow.findIndex((cell) => norm(cell)?.toLowerCase() === "name");
+            const nameIdx = nameRow.findIndex(
+              (cell) => norm(cell)?.toLowerCase() === "name",
+            );
             if (nameIdx >= 0 && nameRow[nameIdx + 1]) {
               employeeName = stringOrNull(nameRow[nameIdx + 1]) ?? employeeName;
             }
           }
           const dateRow = rows[4];
           if (dateRow) {
-            const dateIdx = dateRow.findIndex((cell) => norm(cell)?.toLowerCase() === "date");
+            const dateIdx = dateRow.findIndex(
+              (cell) => norm(cell)?.toLowerCase() === "date",
+            );
             if (dateIdx >= 0 && dateRow[dateIdx + 1]) {
               dateRangeText = dateRow[dateIdx + 1];
               startDate = parseDateRangeStart(dateRangeText);
@@ -376,12 +404,14 @@ function parseTimeCardBlocksSheet(rows: (string | number | Date | undefined)[][]
       if (norm(rows[r][c]) !== "time card") continue;
 
       const startCol = c;
-      
+
       // Extract User ID for this block (look in rows 3-4, same column offset as name)
       let blockUserId: string | null = null;
       const nameRow = rows[3];
       if (nameRow) {
-        const nameIdx = nameRow.findIndex((cell) => norm(cell)?.toLowerCase() === "name");
+        const nameIdx = nameRow.findIndex(
+          (cell) => norm(cell)?.toLowerCase() === "name",
+        );
         if (nameIdx >= 0) {
           // User ID is typically 2 columns before the name
           const userIdIdx = nameIdx - 2;
@@ -394,7 +424,9 @@ function parseTimeCardBlocksSheet(rows: (string | number | Date | undefined)[][]
       if (!blockUserId) {
         const dateRow = rows[4];
         if (dateRow) {
-          const userIdIdx = dateRow.findIndex((cell) => norm(cell)?.toLowerCase() === "user id");
+          const userIdIdx = dateRow.findIndex(
+            (cell) => norm(cell)?.toLowerCase() === "user id",
+          );
           if (userIdIdx >= 0 && dateRow[userIdIdx + 1]) {
             blockUserId = stringOrNull(dateRow[userIdIdx + 1]);
           }
@@ -435,7 +467,9 @@ function parseTimeCardBlocksSheet(rows: (string | number | Date | undefined)[][]
         ]);
 
         const ins = [bnIn, anIn, otIn].filter((x): x is number => x != null);
-        const outs = [bnOut, anOut, otOut].filter((x): x is number => x != null);
+        const outs = [bnOut, anOut, otOut].filter(
+          (x): x is number => x != null,
+        );
 
         const timeInMin = ins.length ? Math.min(...ins) : null;
         const timeOutMin = outs.length ? Math.max(...outs) : null;
@@ -447,7 +481,8 @@ function parseTimeCardBlocksSheet(rows: (string | number | Date | undefined)[][]
           userId: blockUserId ?? null,
           timeIn: timeInMin !== null ? minutesToHHMM(timeInMin) : null,
           timeOut: timeOutMin !== null ? minutesToHHMM(timeOutMin) : null,
-          totalHours: totalMins > 0 ? Math.round((totalMins / 60) * 100) / 100 : null,
+          totalHours:
+            totalMins > 0 ? Math.round((totalMins / 60) * 100) / 100 : null,
           issues: [],
           sourceLine: rr,
           weekday: weekday,
@@ -500,7 +535,9 @@ function parseHeaderMeta(lines: string[]) {
   let endDate: Date | null = null;
   let dateRangeLabel: string | null = null;
 
-  const rangeLine = lines.find((line) => /(\d{4}-\d{2}-\d{2}).*(\d{4}-\d{2}-\d{2})/.test(line));
+  const rangeLine = lines.find((line) =>
+    /(\d{4}-\d{2}-\d{2}).*(\d{4}-\d{2}-\d{2})/.test(line),
+  );
   if (rangeLine) {
     const match = rangeLine.match(/(\d{4}-\d{2}-\d{2}).*(\d{4}-\d{2}-\d{2})/);
     if (match) {
@@ -510,7 +547,9 @@ function parseHeaderMeta(lines: string[]) {
     }
   }
 
-  const nameLine = lines.find((line) => /name/i.test(line) && /user\s*id/i.test(line));
+  const nameLine = lines.find(
+    (line) => /name/i.test(line) && /user\s*id/i.test(line),
+  );
   if (nameLine) {
     const idMatch = nameLine.match(/user\s*id\s*([A-Za-z0-9-]+)/i);
     if (idMatch) userId = idMatch[1];
@@ -538,7 +577,7 @@ function parseHeaderMeta(lines: string[]) {
 function parseAttendanceRow(
   line: string,
   index: number,
-  meta: ReturnType<typeof parseHeaderMeta>
+  meta: ReturnType<typeof parseHeaderMeta>,
 ): ParsedTimesheetRow | null {
   if (!isLikelyName(meta.name)) return null;
 
@@ -548,7 +587,9 @@ function parseAttendanceRow(
   const day = Number(match[1]);
   const weekday = match[2];
   const remainder = match[3].trim();
-  const tokens = remainder ? remainder.split(/\s+/).filter(Boolean).slice(0, 6) : [];
+  const tokens = remainder
+    ? remainder.split(/\s+/).filter(Boolean).slice(0, 6)
+    : [];
   const [bnIn, bnOut, anIn, anOut, otIn, otOut] = tokens;
 
   const raw = [bnIn, bnOut, anIn, anOut, otIn, otOut].map((v) => v ?? "");
@@ -561,13 +602,15 @@ function parseAttendanceRow(
   const timeOutMinutes = parseTimeToMinutes(timeOutCandidate);
 
   const timeIn = timeInMinutes !== null ? minutesToLabel(timeInMinutes) : null;
-  const timeOut = timeOutMinutes !== null ? minutesToLabel(timeOutMinutes) : null;
+  const timeOut =
+    timeOutMinutes !== null ? minutesToLabel(timeOutMinutes) : null;
 
   let totalHours: number | null = null;
   if (timeInMinutes !== null && timeOutMinutes !== null) {
-    const durationMinutes = timeOutMinutes >= timeInMinutes
-      ? timeOutMinutes - timeInMinutes
-      : 24 * 60 - (timeInMinutes - timeOutMinutes);
+    const durationMinutes =
+      timeOutMinutes >= timeInMinutes
+        ? timeOutMinutes - timeInMinutes
+        : 24 * 60 - (timeInMinutes - timeOutMinutes);
     totalHours = Math.round((durationMinutes / 60) * 100) / 100;
   }
 
@@ -575,10 +618,15 @@ function parseAttendanceRow(
   if (!timeIn && !timeOut) issues.push("Missing time in/out");
   if (timeIn && !timeOut) issues.push("Missing time out");
   if (timeOut && !timeIn) issues.push("Missing time in");
-  if (timeInCandidate && timeInMinutes === null) issues.push("Invalid time in format");
-  if (timeOutCandidate && timeOutMinutes === null) issues.push("Invalid time out format");
+  if (timeInCandidate && timeInMinutes === null)
+    issues.push("Invalid time in format");
+  if (timeOutCandidate && timeOutMinutes === null)
+    issues.push("Invalid time out format");
 
-  const date = formatDateFromDay(meta.startDate ?? null, Number.isNaN(day) ? null : day);
+  const date = formatDateFromDay(
+    meta.startDate ?? null,
+    Number.isNaN(day) ? null : day,
+  );
   if (!date) issues.push("Missing or invalid date");
   if (date && meta.endDate && new Date(date) > meta.endDate) {
     issues.push("Date outside range");
@@ -624,7 +672,7 @@ function parseAttendanceTemplatePdf(lines: string[]): ParseResult | null {
 
 function parseSheetMeta(
   rows: (string | number | Date | undefined)[][],
-  columnRange?: { start: number; end: number }
+  columnRange?: { start: number; end: number },
 ) {
   let name: string | null = null;
   let userId: string | null = null;
@@ -639,7 +687,10 @@ function parseSheetMeta(
     return col >= columnRange.start && col <= columnRange.end;
   };
 
-  const nextNonEmptyInRow = (row: (string | number | Date | undefined)[], start: number) => {
+  const nextNonEmptyInRow = (
+    row: (string | number | Date | undefined)[],
+    start: number,
+  ) => {
     for (let c = start; c < Math.min(row.length, start + 6); c += 1) {
       if (!inRange(c)) continue;
       const val = stringOrNull(row[c]);
@@ -678,14 +729,23 @@ function parseSheetMeta(
       const lower = cell.toLowerCase();
 
       if (!name && lower.includes("name")) {
-        name = next ?? nextNonEmptyInRow(row, c + 1) ?? belowNonEmpty(r, c) ?? name;
+        name =
+          next ?? nextNonEmptyInRow(row, c + 1) ?? belowNonEmpty(r, c) ?? name;
       }
       if (!userId && lower.includes("user") && lower.includes("id")) {
-        userId = next ?? nextNonEmptyInRow(row, c + 1) ?? belowNonEmpty(r, c) ?? userId;
+        userId =
+          next ??
+          nextNonEmptyInRow(row, c + 1) ??
+          belowNonEmpty(r, c) ??
+          userId;
       }
       if (!dept && lower.startsWith("dept")) {
         const cleaned = cell.replace(/dept[:.]?/i, "").trim();
-        dept = next ?? nextNonEmptyInRow(row, c + 1) ?? belowNonEmpty(r, c) ?? (cleaned ? cleaned : null);
+        dept =
+          next ??
+          nextNonEmptyInRow(row, c + 1) ??
+          belowNonEmpty(r, c) ??
+          (cleaned ? cleaned : null);
       }
       if (!startDate && datePattern.test(cell)) {
         const m = cell.match(datePattern);
@@ -700,7 +760,11 @@ function parseSheetMeta(
   // Fallback: some templates have "Name <value>" in the same cell or two columns apart (row ~4)
   if (!name) {
     for (let r = 0; r <= 6 && r < rows.length; r += 1) {
-      for (let c = columnRange ? columnRange.start : 0; c <= (columnRange ? columnRange.end : rows[r].length - 1); c += 1) {
+      for (
+        let c = columnRange ? columnRange.start : 0;
+        c <= (columnRange ? columnRange.end : rows[r].length - 1);
+        c += 1
+      ) {
         if (!inRange(c)) continue;
         const cell = stringOrNull(rows[r][c]);
         if (!cell) continue;
@@ -711,7 +775,8 @@ function parseSheetMeta(
           break;
         }
         if (lower === "name") {
-          const next = stringOrNull(rows[r][c + 1]) || stringOrNull(rows[r][c + 2]);
+          const next =
+            stringOrNull(rows[r][c + 1]) || stringOrNull(rows[r][c + 2]);
           if (next) {
             name = next;
             break;
@@ -724,7 +789,11 @@ function parseSheetMeta(
 
   if (!userId) {
     for (let r = 0; r <= 6 && r < rows.length; r += 1) {
-      for (let c = columnRange ? columnRange.start : 0; c <= (columnRange ? columnRange.end : rows[r].length - 1); c += 1) {
+      for (
+        let c = columnRange ? columnRange.start : 0;
+        c <= (columnRange ? columnRange.end : rows[r].length - 1);
+        c += 1
+      ) {
         if (!inRange(c)) continue;
         const cell = stringOrNull(rows[r][c]);
         if (!cell) continue;
@@ -735,7 +804,8 @@ function parseSheetMeta(
           break;
         }
         if (lower === "user id" || lower === "userid") {
-          const next = stringOrNull(rows[r][c + 1]) || stringOrNull(rows[r][c + 2]);
+          const next =
+            stringOrNull(rows[r][c + 1]) || stringOrNull(rows[r][c + 2]);
           if (next) {
             userId = next;
             break;
@@ -752,7 +822,7 @@ function parseSheetMeta(
 function parseAttendanceSheetRow(
   row: (string | number | Date | undefined)[],
   index: number,
-  meta: ReturnType<typeof parseSheetMeta>
+  meta: ReturnType<typeof parseSheetMeta>,
 ): ParsedTimesheetRow | null {
   if (!isLikelyName(meta.name)) return null;
 
@@ -791,7 +861,9 @@ function parseAttendanceSheetRow(
 
   const raw = [bnIn, bnOut, anIn, anOut, otIn, otOut].map((v) => v ?? "");
 
-  const hasAnyTime = [bnIn, bnOut, anIn, anOut, otIn, otOut].some((v) => v && v.trim() !== "");
+  const hasAnyTime = [bnIn, bnOut, anIn, anOut, otIn, otOut].some(
+    (v) => v && v.trim() !== "",
+  );
   if (day === null && !hasAnyTime) {
     return null;
   }
@@ -807,13 +879,15 @@ function parseAttendanceSheetRow(
   const timeOutMinutes = parseTimeToMinutes(timeOutCandidate);
 
   const timeIn = timeInMinutes !== null ? minutesToLabel(timeInMinutes) : null;
-  const timeOut = timeOutMinutes !== null ? minutesToLabel(timeOutMinutes) : null;
+  const timeOut =
+    timeOutMinutes !== null ? minutesToLabel(timeOutMinutes) : null;
 
   let totalHours: number | null = null;
   if (timeInMinutes !== null && timeOutMinutes !== null) {
-    const durationMinutes = timeOutMinutes >= timeInMinutes
-      ? timeOutMinutes - timeInMinutes
-      : 24 * 60 - (timeInMinutes - timeOutMinutes);
+    const durationMinutes =
+      timeOutMinutes >= timeInMinutes
+        ? timeOutMinutes - timeInMinutes
+        : 24 * 60 - (timeInMinutes - timeOutMinutes);
     totalHours = Math.round((durationMinutes / 60) * 100) / 100;
   }
 
@@ -821,8 +895,10 @@ function parseAttendanceSheetRow(
   if (!timeIn && !timeOut) issues.push("Missing time in/out");
   if (timeIn && !timeOut) issues.push("Missing time out");
   if (timeOut && !timeIn) issues.push("Missing time in");
-  if (timeInCandidate && timeInMinutes === null) issues.push("Invalid time in format");
-  if (timeOutCandidate && timeOutMinutes === null) issues.push("Invalid time out format");
+  if (timeInCandidate && timeInMinutes === null)
+    issues.push("Invalid time in format");
+  if (timeOutCandidate && timeOutMinutes === null)
+    issues.push("Invalid time out format");
 
   const date = formatDateFromDay(meta.startDate, day);
   if (!date) issues.push("Missing or invalid date");
@@ -847,11 +923,21 @@ function parseAttendanceSheetRow(
 }
 
 // Parse Attendance Statistic Table (has payroll data: work hours, OT, late, early, etc.)
-function parseAttendanceStatisticTable(rows: (string | number | Date | undefined)[][]): ParseResult | null {
+function parseAttendanceStatisticTable(
+  rows: (string | number | Date | undefined)[][],
+): ParseResult | null {
   // Find header row with "User ID" or "Name" to detect column positions
   const headerIndex = rows.findIndex((row) => {
-    const text = row.map((cell) => stringOrNull(cell)).filter(Boolean).join(" ").toLowerCase();
-    return text.includes("worktime") || text.includes("overtime") || text.includes("late");
+    const text = row
+      .map((cell) => stringOrNull(cell))
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return (
+      text.includes("worktime") ||
+      text.includes("overtime") ||
+      text.includes("late")
+    );
   });
 
   if (headerIndex === -1) return null;
@@ -865,7 +951,7 @@ function parseAttendanceStatisticTable(rows: (string | number | Date | undefined
   let userIdCol = 0;
   let nameCol = 1;
   let deptCol = 2;
-  
+
   headerRow.forEach((cell, idx) => {
     const str = stringOrNull(cell)?.toLowerCase();
     if (str?.includes("user") && str?.includes("id")) userIdCol = idx;
@@ -874,16 +960,24 @@ function parseAttendanceStatisticTable(rows: (string | number | Date | undefined
   });
 
   // Find sub-header row for detailed columns
-  const subHeaderIndex = rows.findIndex((row, idx) =>
-    idx > headerIndex && row.some((cell) => {
-      const str = stringOrNull(cell);
-      return str && (str.includes("Normal") || str.includes("Actual") || str.includes("Trip"));
-    })
+  const subHeaderIndex = rows.findIndex(
+    (row, idx) =>
+      idx > headerIndex &&
+      row.some((cell) => {
+        const str = stringOrNull(cell);
+        return (
+          str &&
+          (str.includes("Normal") ||
+            str.includes("Actual") ||
+            str.includes("Trip"))
+        );
+      }),
   );
 
   const parsed: ParsedTimesheetRow[] = [];
   // Data starts after the sub-header row (if exists) or after the main header
-  const dataStartIndex = subHeaderIndex > headerIndex ? subHeaderIndex + 1 : headerIndex + 1;
+  const dataStartIndex =
+    subHeaderIndex > headerIndex ? subHeaderIndex + 1 : headerIndex + 1;
 
   for (let i = dataStartIndex; i < rows.length; i += 1) {
     const row = rows[i];
@@ -967,7 +1061,7 @@ function parseAttendanceStatisticTable(rows: (string | number | Date | undefined
 // Parse shift code template (User ID, Name, Dept, then date columns with shift codes)
 function parseShiftCodeTemplateSheet(
   rows: (string | number | Date | undefined)[][],
-  headerIndex: number
+  headerIndex: number,
 ): ParseResult | null {
   const headerRow = rows[headerIndex];
   const meta = parseSheetMeta(rows);
@@ -978,7 +1072,7 @@ function parseShiftCodeTemplateSheet(
   let userIdCol = 0;
   let nameCol = 1;
   let deptCol = 2;
-  
+
   headerRow.forEach((cell, idx) => {
     const str = stringOrNull(cell)?.toLowerCase();
     if (str?.includes("user") && str?.includes("id")) userIdCol = idx;
@@ -988,7 +1082,11 @@ function parseShiftCodeTemplateSheet(
 
   // Extract dates from header (columns after Department are day numbers)
   const dateColumns: { day: number; columnIndex: number }[] = [];
-  for (let i = Math.max(3, userIdCol, nameCol, deptCol) + 1; i < headerRow.length; i++) {
+  for (
+    let i = Math.max(3, userIdCol, nameCol, deptCol) + 1;
+    i < headerRow.length;
+    i++
+  ) {
     const cell = headerRow[i];
     if (typeof cell === "number") {
       dateColumns.push({ day: cell, columnIndex: i });
@@ -1057,14 +1155,22 @@ function findAttendanceBlocks(rows: (string | number | Date | undefined)[][]) {
   const blocks: { headerRow: number; headerCol: number }[] = [];
   for (let r = 0; r < rows.length; r += 1) {
     const row = rows[r];
-    const joined = row.map(stringOrNull).filter(Boolean).join(" ").toLowerCase();
+    const joined = row
+      .map(stringOrNull)
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
 
     for (let c = 0; c < row.length; c += 1) {
       const cell = stringOrNull(row[c]);
       if (!cell) continue;
       const lower = cell.toLowerCase();
 
-      if (lower.includes("date") && joined.includes("before") && joined.includes("noon")) {
+      if (
+        lower.includes("date") &&
+        joined.includes("before") &&
+        joined.includes("noon")
+      ) {
         // widen lookahead to capture merged header spans
         let hasBeforeNoon = false;
         for (let k = 1; k <= 12; k += 1) {
@@ -1080,7 +1186,10 @@ function findAttendanceBlocks(rows: (string | number | Date | undefined)[][]) {
       }
 
       // Fallback: some attendance tables are labeled "Employee Attendance Table" without the "before noon" wording.
-      if (joined.includes("employee attendance table") && lower.includes("date")) {
+      if (
+        joined.includes("employee attendance table") &&
+        lower.includes("date")
+      ) {
         blocks.push({ headerRow: r, headerCol: c });
       }
     }
@@ -1088,7 +1197,9 @@ function findAttendanceBlocks(rows: (string | number | Date | undefined)[][]) {
   return blocks;
 }
 
-function parseAttendanceTemplateSheet(rows: (string | number | Date | undefined)[][]): ParseResult | null {
+function parseAttendanceTemplateSheet(
+  rows: (string | number | Date | undefined)[][],
+): ParseResult | null {
   const blocks = findAttendanceBlocks(rows);
   if (!blocks.length) return null;
 
@@ -1103,9 +1214,10 @@ function parseAttendanceTemplateSheet(rows: (string | number | Date | undefined)
     const meta = parseSheetMeta(rows, { start: c, end: c + 30 });
     if (!meta.startDate) warnings.push("Missing date range start");
     if (!meta.name) warnings.push("Missing employee name");
-    
+
     // Capture first block's meta for return
-    if (!firstMetaStartDate && meta.startDate) firstMetaStartDate = meta.startDate;
+    if (!firstMetaStartDate && meta.startDate)
+      firstMetaStartDate = meta.startDate;
     if (!firstMetaEndDate && meta.endDate) firstMetaEndDate = meta.endDate;
 
     let blankStreak = 0;
@@ -1142,7 +1254,9 @@ function parseAttendanceTemplateSheet(rows: (string | number | Date | undefined)
   };
 }
 
-function findHeaderRowAndMapping(rows: (string | number | Date | undefined)[][]) {
+function findHeaderRowAndMapping(
+  rows: (string | number | Date | undefined)[][],
+) {
   let bestIndex = 0;
   let bestMapping = mapHeaderIndices(rows[0]);
   let bestScore = Object.keys(bestMapping).length;
@@ -1153,7 +1267,9 @@ function findHeaderRowAndMapping(rows: (string | number | Date | undefined)[][])
     const recognized = Object.keys(mapping).length;
     if (!recognized) continue;
 
-    const requiredPresent = REQUIRED_FIELDS.filter((field) => mapping[field] !== undefined).length;
+    const requiredPresent = REQUIRED_FIELDS.filter(
+      (field) => mapping[field] !== undefined,
+    ).length;
     const score = recognized * 2 + requiredPresent * 3;
 
     if (score > bestScore) {
@@ -1166,7 +1282,9 @@ function findHeaderRowAndMapping(rows: (string | number | Date | undefined)[][])
   return { headerIndex: bestIndex, mapping: bestMapping };
 }
 
-function parseGenericMappedSheet(rows: (string | number | Date | undefined)[][]): ParseResult {
+function parseGenericMappedSheet(
+  rows: (string | number | Date | undefined)[][],
+): ParseResult {
   if (rows.length === 0) {
     return { format: "excel", rows: [], warnings: ["Worksheet is empty"] };
   }
@@ -1176,12 +1294,16 @@ function parseGenericMappedSheet(rows: (string | number | Date | undefined)[][])
   const dataRows = rows.slice(dataStart);
   const warnings: string[] = [];
 
-  const missingRequired = REQUIRED_FIELDS.filter((field) => mapping[field] === undefined);
+  const missingRequired = REQUIRED_FIELDS.filter(
+    (field) => mapping[field] === undefined,
+  );
   if (missingRequired.length) {
     warnings.push(`Missing columns: ${missingRequired.join(", ")}`);
   }
 
-  const parsedRows = dataRows.map((row, idx) => buildRow(row, mapping, dataStart + idx + 1));
+  const parsedRows = dataRows.map((row, idx) =>
+    buildRow(row, mapping, dataStart + idx + 1),
+  );
 
   return {
     format: "excel",
@@ -1193,7 +1315,7 @@ function parseGenericMappedSheet(rows: (string | number | Date | undefined)[][])
 function buildRow(
   row: (string | number | Date | undefined)[],
   mapping: Partial<Record<NormalizedField, number>>,
-  sourceLine: number
+  sourceLine: number,
 ): ParsedTimesheetRow {
   const nameIndex = mapping.employeeName;
   const dateIndex = mapping.date;
@@ -1208,7 +1330,8 @@ function buildRow(
   const rawHours = hoursIndex !== undefined ? row[hoursIndex] : undefined;
 
   const issues: string[] = [];
-  const employeeName = typeof rawName === "string" ? rawName.trim() : String(rawName ?? "").trim();
+  const employeeName =
+    typeof rawName === "string" ? rawName.trim() : String(rawName ?? "").trim();
   if (!employeeName) issues.push("Missing employee name");
 
   const date = parseDateValue(rawDate);
@@ -1218,13 +1341,19 @@ function buildRow(
   const timeOutMinutes = parseTimeToMinutes(rawTimeOut);
 
   const timeIn = timeInMinutes !== null ? minutesToLabel(timeInMinutes) : null;
-  const timeOut = timeOutMinutes !== null ? minutesToLabel(timeOutMinutes) : null;
+  const timeOut =
+    timeOutMinutes !== null ? minutesToLabel(timeOutMinutes) : null;
 
   let totalHours = parseHoursValue(rawHours);
-  if (totalHours === null && timeInMinutes !== null && timeOutMinutes !== null) {
-    const durationMinutes = timeOutMinutes >= timeInMinutes
-      ? timeOutMinutes - timeInMinutes
-      : 24 * 60 - (timeInMinutes - timeOutMinutes);
+  if (
+    totalHours === null &&
+    timeInMinutes !== null &&
+    timeOutMinutes !== null
+  ) {
+    const durationMinutes =
+      timeOutMinutes >= timeInMinutes
+        ? timeOutMinutes - timeInMinutes
+        : 24 * 60 - (timeInMinutes - timeOutMinutes);
     totalHours = Math.round((durationMinutes / 60) * 100) / 100;
   }
 
@@ -1241,8 +1370,8 @@ function buildRow(
   };
 }
 
-export function parseExcelTimesheet(buffer: Buffer): ParseResult {
-  const workbook = XLSX.read(buffer, { type: "buffer", cellDates: true });
+export function parseExcelTimesheet(input: ArrayBuffer | Buffer): ParseResult {
+  const workbook = XLSX.read(input, { type: "array", cellDates: true });
   const sheetNames = workbook.SheetNames;
 
   if (!sheetNames.length) {
@@ -1255,9 +1384,10 @@ export function parseExcelTimesheet(buffer: Buffer): ParseResult {
   let endDate: string | null = null;
 
   // Prioritize attendance statistic/payroll sheets first
-  const prioritySheet = sheetNames.find((name: string) =>
-    name.toLowerCase().includes("attendance statistic") ||
-    name.toLowerCase().includes("payroll")
+  const prioritySheet = sheetNames.find(
+    (name: string) =>
+      name.toLowerCase().includes("attendance statistic") ||
+      name.toLowerCase().includes("payroll"),
   );
 
   const orderedSheets = prioritySheet
@@ -1266,7 +1396,9 @@ export function parseExcelTimesheet(buffer: Buffer): ParseResult {
 
   orderedSheets.forEach((sheetName: string) => {
     const sheet = workbook.Sheets[sheetName];
-    const rows = XLSX.utils.sheet_to_json<(string | number | Date | undefined)[]>(sheet, {
+    const rows = XLSX.utils.sheet_to_json<
+      (string | number | Date | undefined)[]
+    >(sheet, {
       header: 1,
       blankrows: false,
       raw: true,
@@ -1286,34 +1418,57 @@ export function parseExcelTimesheet(buffer: Buffer): ParseResult {
 
     const attendanceParsed = parseAttendanceTemplateSheet(rows);
     if (attendanceParsed) {
-      aggregatedRows.push(...attendanceParsed.rows.map((r) => ({ ...r, sheetName })));
-      warnings.push(...attendanceParsed.warnings.map((w) => `${sheetName}: ${w}`));
-      if (!startDate && attendanceParsed.startDate) startDate = attendanceParsed.startDate;
-      if (!endDate && attendanceParsed.endDate) endDate = attendanceParsed.endDate;
+      aggregatedRows.push(
+        ...attendanceParsed.rows.map((r) => ({ ...r, sheetName })),
+      );
+      warnings.push(
+        ...attendanceParsed.warnings.map((w) => `${sheetName}: ${w}`),
+      );
+      if (!startDate && attendanceParsed.startDate)
+        startDate = attendanceParsed.startDate;
+      if (!endDate && attendanceParsed.endDate)
+        endDate = attendanceParsed.endDate;
       sheetParsed = true;
     }
 
     const timeCardParsed = parseTimeCardBlocksSheet(rows);
     if (timeCardParsed) {
-      aggregatedRows.push(...timeCardParsed.rows.map((r) => ({ ...r, sheetName })));
-      warnings.push(...timeCardParsed.warnings.map((w) => `${sheetName}: ${w}`));
-      if (!startDate && timeCardParsed.startDate) startDate = timeCardParsed.startDate;
+      aggregatedRows.push(
+        ...timeCardParsed.rows.map((r) => ({ ...r, sheetName })),
+      );
+      warnings.push(
+        ...timeCardParsed.warnings.map((w) => `${sheetName}: ${w}`),
+      );
+      if (!startDate && timeCardParsed.startDate)
+        startDate = timeCardParsed.startDate;
       if (!endDate && timeCardParsed.endDate) endDate = timeCardParsed.endDate;
       sheetParsed = true;
     }
 
     // Shift setting table
     if (!sheetParsed) {
-      const shiftHeaderIndex = rows.findIndex((row: (string | number | Date | undefined)[]) => {
-        const text = row.map((cell: string | number | Date | undefined) => stringOrNull(cell)?.toLowerCase() ?? "").join(" ");
-        return text.includes("user id") && text.includes("name");
-      });
+      const shiftHeaderIndex = rows.findIndex(
+        (row: (string | number | Date | undefined)[]) => {
+          const text = row
+            .map(
+              (cell: string | number | Date | undefined) =>
+                stringOrNull(cell)?.toLowerCase() ?? "",
+            )
+            .join(" ");
+          return text.includes("user id") && text.includes("name");
+        },
+      );
       if (shiftHeaderIndex !== -1) {
         const shiftParsed = parseShiftCodeTemplateSheet(rows, shiftHeaderIndex);
         if (shiftParsed) {
-          aggregatedRows.push(...shiftParsed.rows.map((r) => ({ ...r, sheetName })));
-          warnings.push(...shiftParsed.warnings.map((w) => `${sheetName}: ${w}`));
-          if (!startDate && shiftParsed.startDate) startDate = shiftParsed.startDate;
+          aggregatedRows.push(
+            ...shiftParsed.rows.map((r) => ({ ...r, sheetName })),
+          );
+          warnings.push(
+            ...shiftParsed.warnings.map((w) => `${sheetName}: ${w}`),
+          );
+          if (!startDate && shiftParsed.startDate)
+            startDate = shiftParsed.startDate;
           if (!endDate && shiftParsed.endDate) endDate = shiftParsed.endDate;
         }
       }
@@ -1335,7 +1490,10 @@ export function parseExcelTimesheet(buffer: Buffer): ParseResult {
     if (row.template === "time-card") return !!row.date;
 
     // For other templates, require some time data
-    const hasTime = (row.timeIn && row.timeIn.trim() !== "") || (row.timeOut && row.timeOut.trim() !== "") || (row.totalHours ?? 0) > 0;
+    const hasTime =
+      (row.timeIn && row.timeIn.trim() !== "") ||
+      (row.timeOut && row.timeOut.trim() !== "") ||
+      (row.totalHours ?? 0) > 0;
     return hasTime;
   });
 
@@ -1389,7 +1547,11 @@ function countTimeFields(row: ParsedTimesheetRow): number {
 // CSV uses the same parser; sheet_to_json handles csv buffers via XLSX.read.
 export function parseCsvTimesheet(buffer: Buffer): ParseResult {
   const result = parseExcelTimesheet(buffer);
-  return { ...result, format: "excel", rows: result.rows.map((r) => ({ ...r, sheetName: r.sheetName ?? "CSV" })) };
+  return {
+    ...result,
+    format: "excel",
+    rows: result.rows.map((r) => ({ ...r, sheetName: r.sheetName ?? "CSV" })),
+  };
 }
 
 type Delimiter = "tab" | "pipe" | "comma" | "space";
@@ -1409,7 +1571,10 @@ function splitWithDelimiter(line: string, delimiter: Delimiter) {
   }
 }
 
-function detectDelimiter(line: string): { parts: string[]; delimiter: Delimiter } {
+function detectDelimiter(line: string): {
+  parts: string[];
+  delimiter: Delimiter;
+} {
   const candidates: { parts: string[]; delimiter: Delimiter }[] = [
     { delimiter: "tab", parts: splitWithDelimiter(line, "tab") },
     { delimiter: "pipe", parts: splitWithDelimiter(line, "pipe") },
@@ -1425,6 +1590,8 @@ function detectDelimiter(line: string): { parts: string[]; delimiter: Delimiter 
 }
 
 async function extractPdfLines(buffer: Buffer): Promise<string[]> {
+  // Dynamic import to avoid loading pdf-parse at module init
+  const { PDFParse } = await import("pdf-parse");
   const parser = new PDFParse({ data: buffer });
   try {
     const textResult = await parser.getText();
@@ -1476,7 +1643,9 @@ export async function parsePdfTimesheet(buffer: Buffer): Promise<ParseResult> {
   }
 
   const warnings: string[] = [];
-  const missingRequired = REQUIRED_FIELDS.filter((field) => mapping[field] === undefined);
+  const missingRequired = REQUIRED_FIELDS.filter(
+    (field) => mapping[field] === undefined,
+  );
   if (missingRequired.length) {
     warnings.push(`Missing columns: ${missingRequired.join(", ")}`);
   }
@@ -1484,10 +1653,14 @@ export async function parsePdfTimesheet(buffer: Buffer): Promise<ParseResult> {
   const parsedRows: ParsedTimesheetRow[] = [];
   for (let i = headerIndex + 1; i < lines.length; i += 1) {
     const line = lines[i];
-    const parts = splitWithDelimiter(line, delimiter).map((part) => part.trim());
+    const parts = splitWithDelimiter(line, delimiter).map((part) =>
+      part.trim(),
+    );
 
     if (parts.length < 2) continue;
-    const row: (string | number | Date | undefined)[] = headerParts.map((_, idx) => parts[idx]);
+    const row: (string | number | Date | undefined)[] = headerParts.map(
+      (_, idx) => parts[idx],
+    );
     const parsed = buildRow(row, mapping, i + 1);
     parsedRows.push(parsed);
   }

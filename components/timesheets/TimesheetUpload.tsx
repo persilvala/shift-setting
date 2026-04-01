@@ -1,9 +1,15 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { ParsedTimesheetRow, TimesheetMeta } from "@/lib/types";
 import { PageHeader } from "@/components/PageHeader";
+import {
+  parseExcelFileClient,
+  parseCsvFileClient,
+  type ClientParseResult,
+} from "@/lib/clientParser";
 
 type UploadSuccess = {
   ok: true;
@@ -47,7 +53,13 @@ type TimesheetPayload = {
 type TimesheetLoadResponse = {
   ok: boolean;
   rows?: ParsedTimesheetRow[];
-  timesheet?: { startDate: string; endDate: string; uploadedAt: string; id: string; format?: string } | null;
+  timesheet?: {
+    startDate: string;
+    endDate: string;
+    uploadedAt: string;
+    id: string;
+    format?: string;
+  } | null;
 };
 
 type TimesheetHistoryItem = {
@@ -91,8 +103,12 @@ const parseDateInput = (value: string): Date | null => {
 
 type EmployeeSummary = { id: number; employeeName: string; dayCount: number };
 
-const mapParsedToManualRow = (row: ParsedTimesheetRow, index: number): ManualRow => ({
-  id: (row as any).id ?? `manual-${index}-${row.employeeName}-${row.date ?? ""}`,
+const mapParsedToManualRow = (
+  row: ParsedTimesheetRow,
+  index: number,
+): ManualRow => ({
+  id:
+    (row as any).id ?? `manual-${index}-${row.employeeName}-${row.date ?? ""}`,
   employeeName: row.employeeName ?? "",
   employeeId: (row as any).employeeId ?? null,
   date: row.date ?? "",
@@ -130,14 +146,24 @@ export function TimesheetUpload() {
   const [bulkNameUpload, setBulkNameUpload] = useState("");
   const [bulkDeptUpload, setBulkDeptUpload] = useState("");
   const [previewError, setPreviewError] = useState<string | null>(null);
-  const [invalidFields, setInvalidFields] = useState<Record<string, string[]>>({});
+  const [invalidFields, setInvalidFields] = useState<Record<string, string[]>>(
+    {},
+  );
   const [loadingRows, setLoadingRows] = useState(false);
   const [employees, setEmployees] = useState<EmployeeSummary[]>([]);
   const [loadingEmployees, setLoadingEmployees] = useState(false);
-  const [activeTimesheetId, setActiveTimesheetId] = useState<number | null>(null);
-  const [timesheetHistory, setTimesheetHistory] = useState<TimesheetHistoryItem[]>([]);
-  const [historyPagination, setHistoryPagination] = useState<HistoryPagination>({ page: 1, limit: 5, total: 0, totalPages: 1 });
-  const [selectedTimesheetId, setSelectedTimesheetId] = useState<number | null>(null);
+  const [activeTimesheetId, setActiveTimesheetId] = useState<number | null>(
+    null,
+  );
+  const [timesheetHistory, setTimesheetHistory] = useState<
+    TimesheetHistoryItem[]
+  >([]);
+  const [historyPagination, setHistoryPagination] = useState<HistoryPagination>(
+    { page: 1, limit: 5, total: 0, totalPages: 1 },
+  );
+  const [selectedTimesheetId, setSelectedTimesheetId] = useState<number | null>(
+    null,
+  );
 
   const hydrateFromServer = (payload: TimesheetPayload) => {
     const rows = payload.rows ?? [];
@@ -147,9 +173,10 @@ export function TimesheetUpload() {
     if (payload.format === "manual" || entryMode === "manual") {
       setManualRows(rows.map(mapParsedToManualRow));
     }
-    const tsId = payload.timesheetId !== undefined && payload.timesheetId !== null
-      ? Number(payload.timesheetId)
-      : null;
+    const tsId =
+      payload.timesheetId !== undefined && payload.timesheetId !== null
+        ? Number(payload.timesheetId)
+        : null;
     setActiveTimesheetId(Number.isFinite(tsId as number) ? tsId : null);
   };
 
@@ -170,18 +197,27 @@ export function TimesheetUpload() {
 
   const filterRowsForEmployee = (rows: ParsedTimesheetRow[], name: string) => {
     const scoped = name.trim().toLowerCase();
-    return rows.filter((row) => (row.employeeName ?? "").toLowerCase() === scoped);
+    return rows.filter(
+      (row) => (row.employeeName ?? "").toLowerCase() === scoped,
+    );
   };
 
-  const loadEmployeeRows = async (name: string, employeeId?: number | null, page = 1) => {
+  const loadEmployeeRows = async (
+    name: string,
+    employeeId?: number | null,
+    page = 1,
+  ) => {
     try {
       setLoadingRows(true);
       const params = new URLSearchParams();
-      if (employeeId !== undefined && employeeId !== null) params.set("employeeId", String(employeeId));
+      if (employeeId !== undefined && employeeId !== null)
+        params.set("employeeId", String(employeeId));
       else params.set("employeeName", name);
       params.set("page", page.toString());
       params.set("limit", "5");
-      const response = await fetch(`/api/timesheets/employee-rows?${params.toString()}`);
+      const response = await fetch(
+        `/api/timesheets/employee-rows?${params.toString()}`,
+      );
       if (!response.ok) return;
       const data = await response.json();
       if (!data.ok) return;
@@ -199,18 +235,28 @@ export function TimesheetUpload() {
 
       if (scopedTimesheets.length > 0) {
         const firstTimesheet = scopedTimesheets[0];
-        if (!selectedTimesheetId || !scopedTimesheets.find(t => t.id === selectedTimesheetId)) {
+        if (
+          !selectedTimesheetId ||
+          !scopedTimesheets.find((t) => t.id === selectedTimesheetId)
+        ) {
           setSelectedTimesheetId(firstTimesheet.id);
         }
-        const selected = scopedTimesheets.find(t => t.id === selectedTimesheetId) ?? scopedTimesheets[0];
-        setManualRows(filterRowsForEmployee(selected.rows, name).map(mapParsedToManualRow));
+        const selected =
+          scopedTimesheets.find((t) => t.id === selectedTimesheetId) ??
+          scopedTimesheets[0];
+        setManualRows(
+          filterRowsForEmployee(selected.rows, name).map(mapParsedToManualRow),
+        );
         setStartDate(selected.startDate ?? null);
         setEndDate(selected.endDate ?? null);
         setBulkDept(selected.rows[0]?.dept ?? "");
         setBulkName(name);
         setActiveTimesheetId(selected.id);
       } else {
-        const seeded = Array.from({ length: 20 }, () => ({ ...createBlankManualRow(), employeeName: name }));
+        const seeded = Array.from({ length: 20 }, () => ({
+          ...createBlankManualRow(),
+          employeeName: name,
+        }));
         setManualRows(seeded);
         setStartDate(null);
         setEndDate(null);
@@ -229,7 +275,10 @@ export function TimesheetUpload() {
     setSelectedTimesheetId(timesheetId);
     const timesheet = timesheetHistory.find((t) => t.id === timesheetId);
     if (timesheet) {
-      const scopedRows = filterRowsForEmployee(timesheet.rows, effectiveEmployee || timesheet.rows[0]?.employeeName || "");
+      const scopedRows = filterRowsForEmployee(
+        timesheet.rows,
+        effectiveEmployee || timesheet.rows[0]?.employeeName || "",
+      );
       setManualRows(scopedRows.map(mapParsedToManualRow));
       setStartDate(timesheet.startDate ?? null);
       setEndDate(timesheet.endDate ?? null);
@@ -293,7 +342,11 @@ export function TimesheetUpload() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           rows: payloadRows,
-          fileName: result?.timesheetId ? result.fileName ?? "upload" : result?.format ? `${result.format}-upload` : "upload",
+          fileName: result?.timesheetId
+            ? (result.fileName ?? "upload")
+            : result?.format
+              ? `${result.format}-upload`
+              : "upload",
           format: result?.format ?? "excel",
           entrySource: "upload",
         }),
@@ -328,13 +381,14 @@ export function TimesheetUpload() {
 
   const applyBulkToManualRows = (rows: ManualRow[]) =>
     rows.map((row) =>
-      row.employeeName.toLowerCase() === (effectiveEmployee?.toLowerCase?.() ?? "")
+      row.employeeName.toLowerCase() ===
+      (effectiveEmployee?.toLowerCase?.() ?? "")
         ? {
             ...row,
             employeeName: bulkName?.trim() ? bulkName.trim() : row.employeeName,
             dept: bulkDept ?? row.dept,
           }
-        : row
+        : row,
     );
 
   const addDateRangeRows = () => {
@@ -358,7 +412,8 @@ export function TimesheetUpload() {
       return;
     }
 
-    const totalDays = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    const totalDays =
+      Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
     const RANGE_LIMIT = 90;
     if (totalDays > RANGE_LIMIT) {
       setPreviewError(`Choose a range of ${RANGE_LIMIT} days or fewer.`);
@@ -376,8 +431,10 @@ export function TimesheetUpload() {
       setManualRows((rows) => {
         const existingDates = new Set(
           rows
-            .filter((row) => row.employeeName.toLowerCase() === scoped.toLowerCase())
-            .map((row) => row.date)
+            .filter(
+              (row) => row.employeeName.toLowerCase() === scoped.toLowerCase(),
+            )
+            .map((row) => row.date),
         );
 
         const additions: ManualRow[] = [];
@@ -404,10 +461,12 @@ export function TimesheetUpload() {
 
       const skipped = totalDays - added;
       if (added === 0) {
-        setManualMessage("No new dates added; all dates already exist for this employee.");
+        setManualMessage(
+          "No new dates added; all dates already exist for this employee.",
+        );
       } else {
         setManualMessage(
-          `Added ${added} date${added === 1 ? "" : "s"} for ${scoped}${skipped > 0 ? ` (${skipped} already existed)` : ""}.`
+          `Added ${added} date${added === 1 ? "" : "s"} for ${scoped}${skipped > 0 ? ` (${skipped} already existed)` : ""}.`,
         );
       }
 
@@ -428,7 +487,9 @@ export function TimesheetUpload() {
       mergedFromDatabaseCount: 0,
     };
 
-    const existingDates = new Set((baseResult.rows ?? []).map((row) => row.date).filter(Boolean));
+    const existingDates = new Set(
+      (baseResult.rows ?? []).map((row) => row.date).filter(Boolean),
+    );
     const additions: ParsedTimesheetRow[] = [];
     const cursor = new Date(start);
     while (cursor.getTime() <= end.getTime()) {
@@ -455,7 +516,9 @@ export function TimesheetUpload() {
     const added = additions.length;
     const skipped = totalDays - added;
     if (added === 0) {
-      setUploadMessage("No new dates added; all dates already exist in preview.");
+      setUploadMessage(
+        "No new dates added; all dates already exist in preview.",
+      );
       setRangeStart("");
       setRangeEnd("");
       if (!result) setResult(baseResult);
@@ -467,18 +530,27 @@ export function TimesheetUpload() {
       .map((row) => parseDateInput(row.date ?? ""))
       .filter((d): d is Date => Boolean(d));
     const nextStart = validDates.length
-      ? new Date(Math.min(...validDates.map((d) => d.getTime()))).toISOString().slice(0, 10)
-      : baseResult.startDate ?? null;
+      ? new Date(Math.min(...validDates.map((d) => d.getTime())))
+          .toISOString()
+          .slice(0, 10)
+      : (baseResult.startDate ?? null);
     const nextEnd = validDates.length
-      ? new Date(Math.max(...validDates.map((d) => d.getTime()))).toISOString().slice(0, 10)
-      : baseResult.endDate ?? null;
+      ? new Date(Math.max(...validDates.map((d) => d.getTime())))
+          .toISOString()
+          .slice(0, 10)
+      : (baseResult.endDate ?? null);
 
-    setResult({ ...baseResult, rows: nextRows, startDate: nextStart, endDate: nextEnd });
+    setResult({
+      ...baseResult,
+      rows: nextRows,
+      startDate: nextStart,
+      endDate: nextEnd,
+    });
     if (nextStart) setStartDate(nextStart);
     if (nextEnd) setEndDate(nextEnd);
 
     setUploadMessage(
-      `Added ${added} date${added === 1 ? "" : "s"} to upload preview${skipped > 0 ? ` (${skipped} already existed)` : ""}.`
+      `Added ${added} date${added === 1 ? "" : "s"} to upload preview${skipped > 0 ? ` (${skipped} already existed)` : ""}.`,
     );
     setRangeStart("");
     setRangeEnd("");
@@ -541,22 +613,32 @@ export function TimesheetUpload() {
 
   const effectiveEmployee = useMemo(() => {
     if (currentEmployee.trim()) return currentEmployee.trim();
-    if (entryMode === "manual" && firstManualEmployee) return firstManualEmployee;
+    if (entryMode === "manual" && firstManualEmployee)
+      return firstManualEmployee;
     return "";
   }, [currentEmployee, entryMode, firstManualEmployee]);
 
   const previewRows = useMemo(() => {
     if (entryMode === "manual") {
       const scoped = effectiveEmployee.toLowerCase();
-      const filtered = scoped ? manualRows.filter((row) => (row.employeeName || "").toLowerCase() === scoped) : [];
+      const filtered = scoped
+        ? manualRows.filter(
+            (row) => (row.employeeName || "").toLowerCase() === scoped,
+          )
+        : [];
       return filtered;
     }
     return (result?.rows ?? []).slice(0, PREVIEW_LIMIT);
   }, [effectiveEmployee, entryMode, manualRows, result]);
 
-  const totalRows = entryMode === "manual"
-    ? manualRows.filter((row) => !effectiveEmployee || row.employeeName.toLowerCase() === effectiveEmployee.toLowerCase()).length
-    : result?.rows.length ?? 0;
+  const totalRows =
+    entryMode === "manual"
+      ? manualRows.filter(
+          (row) =>
+            !effectiveEmployee ||
+            row.employeeName.toLowerCase() === effectiveEmployee.toLowerCase(),
+        ).length
+      : (result?.rows.length ?? 0);
 
   useEffect(() => {
     loadEmployees();
@@ -566,13 +648,17 @@ export function TimesheetUpload() {
     if (entryMode !== "manual") return;
     if (!effectiveEmployee) return;
     const key = effectiveEmployee.toLowerCase();
-    const found = employees.find((emp) => emp.employeeName.toLowerCase() === key);
+    const found = employees.find(
+      (emp) => emp.employeeName.toLowerCase() === key,
+    );
     loadEmployeeRows(effectiveEmployee, found?.id, historyPagination.page);
   }, [entryMode, effectiveEmployee, employees, historyPagination.page]);
 
   useEffect(() => {
     if (timesheetHistory.length === 0) return;
-    const selectedExists = timesheetHistory.find((t) => t.id === selectedTimesheetId);
+    const selectedExists = timesheetHistory.find(
+      (t) => t.id === selectedTimesheetId,
+    );
     if (!selectedExists) {
       selectTimesheet(timesheetHistory[0].id);
     }
@@ -586,8 +672,12 @@ export function TimesheetUpload() {
       .map((row) => new Date(row.date))
       .filter((d) => !Number.isNaN(d.getTime()));
     if (!dates.length) return;
-    const minDate = new Date(Math.min(...dates.map((d) => d.getTime()))).toISOString().slice(0, 10);
-    const maxDate = new Date(Math.max(...dates.map((d) => d.getTime()))).toISOString().slice(0, 10);
+    const minDate = new Date(Math.min(...dates.map((d) => d.getTime())))
+      .toISOString()
+      .slice(0, 10);
+    const maxDate = new Date(Math.max(...dates.map((d) => d.getTime())))
+      .toISOString()
+      .slice(0, 10);
     setStartDate(minDate);
     setEndDate(maxDate);
   }, [entryMode, manualRows]);
@@ -604,7 +694,10 @@ export function TimesheetUpload() {
 
   useEffect(() => {
     if (!effectiveEmployee) return;
-    const matches = manualRows.filter((row) => row.employeeName.toLowerCase() === effectiveEmployee.toLowerCase());
+    const matches = manualRows.filter(
+      (row) =>
+        row.employeeName.toLowerCase() === effectiveEmployee.toLowerCase(),
+    );
     if (matches.length) {
       setBulkName(effectiveEmployee);
       const firstDept = matches.find((r) => r.dept)?.dept ?? "";
@@ -623,8 +716,8 @@ export function TimesheetUpload() {
           employeeName: row.employeeName,
           dept: row.dept ?? null,
           date: row.date,
-          timeIn: status === "absent" ? null : row.timeIn ?? null,
-          timeOut: status === "absent" ? null : row.timeOut ?? null,
+          timeIn: status === "absent" ? null : (row.timeIn ?? null),
+          timeOut: status === "absent" ? null : (row.timeOut ?? null),
           totalHours: status === "absent" ? null : row.totalHours,
           attendanceStatus: status,
           issues: [],
@@ -632,7 +725,10 @@ export function TimesheetUpload() {
         };
       });
       sessionStorage.setItem("timesheetData", JSON.stringify(payloadRows));
-      sessionStorage.setItem("timesheetMeta", JSON.stringify({} satisfies TimesheetMeta));
+      sessionStorage.setItem(
+        "timesheetMeta",
+        JSON.stringify({} satisfies TimesheetMeta),
+      );
       router.push("/admin/payroll");
       return;
     }
@@ -646,12 +742,15 @@ export function TimesheetUpload() {
       if (!ok) return;
     }
     sessionStorage.setItem("timesheetData", JSON.stringify(result.rows));
-    sessionStorage.setItem("timesheetMeta", JSON.stringify({
-      format: result.format === "manual" ? undefined : result.format,
-      timesheetId: result.timesheetId,
-      startDate: result.startDate,
-      endDate: result.endDate,
-    } satisfies TimesheetMeta));
+    sessionStorage.setItem(
+      "timesheetMeta",
+      JSON.stringify({
+        format: result.format === "manual" ? undefined : result.format,
+        timesheetId: result.timesheetId,
+        startDate: result.startDate,
+        endDate: result.endDate,
+      } satisfies TimesheetMeta),
+    );
     router.push("/admin/payroll");
   };
 
@@ -668,8 +767,8 @@ export function TimesheetUpload() {
         employeeName: row.employeeName,
         dept: row.dept ?? "",
         date: row.date,
-        timeIn: status === "absent" ? null : row.timeIn ?? null,
-        timeOut: status === "absent" ? null : row.timeOut ?? null,
+        timeIn: status === "absent" ? null : (row.timeIn ?? null),
+        timeOut: status === "absent" ? null : (row.timeOut ?? null),
         totalHours: status === "absent" ? null : row.totalHours,
         attendanceStatus: status,
       };
@@ -677,7 +776,9 @@ export function TimesheetUpload() {
 
     try {
       setLoadingRows(true);
-      const url = activeTimesheetId ? `/api/timesheets/${activeTimesheetId}` : "/api/timesheets";
+      const url = activeTimesheetId
+        ? `/api/timesheets/${activeTimesheetId}`
+        : "/api/timesheets";
       const method = activeTimesheetId ? "PUT" : "POST";
       const response = await fetch(url, {
         method,
@@ -688,7 +789,8 @@ export function TimesheetUpload() {
       const data = (await response.json()) as TimesheetPayload | UploadError;
 
       if (!response.ok || !data || ("ok" in data && data.ok === false)) {
-        const message = "error" in data ? data.error : "Failed to save manual timesheet";
+        const message =
+          "error" in data ? data.error : "Failed to save manual timesheet";
         setError(message);
         return false;
       }
@@ -699,7 +801,9 @@ export function TimesheetUpload() {
       setError(null);
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save manual timesheet");
+      setError(
+        err instanceof Error ? err.message : "Failed to save manual timesheet",
+      );
       return false;
     } finally {
       setLoadingRows(false);
@@ -718,33 +822,202 @@ export function TimesheetUpload() {
     setResult(null);
 
     try {
-      const body = new FormData();
-      body.append("file", file);
+      const fileName = file.name.toLowerCase();
+      let parseResult: ClientParseResult;
 
-      const response = await fetch("/api/timesheets/upload", { method: "POST", body });
+      // Parse Excel/CSV client-side
+      if (
+        fileName.endsWith(".xlsx") ||
+        fileName.endsWith(".xls") ||
+        fileName.endsWith(".csv")
+      ) {
+        const arrayBuffer = await file.arrayBuffer();
+
+        if (fileName.endsWith(".csv")) {
+          const text = await file.text();
+          parseResult = parseCsvFileClient(text, file.name);
+        } else {
+          try {
+            parseResult = parseExcelFileClient(arrayBuffer, file.name);
+          } catch (parseError) {
+            // If shift code template or other unsupported format, fallback to server-side parsing
+            if (
+              parseError instanceof Error &&
+              parseError.message === "SHIFT_CODE_TEMPLATE"
+            ) {
+              console.log(
+                "Shift code template detected, using server-side parsing",
+              );
+              const body = new FormData();
+              body.append("file", file);
+
+              const response = await fetch("/api/timesheets/upload", {
+                method: "POST",
+                body,
+              });
+
+              // Check if response is JSON before parsing
+              const contentType = response.headers.get("content-type");
+              if (!contentType || !contentType.includes("application/json")) {
+                const text = await response.text();
+                console.error(
+                  "Non-JSON response from API:",
+                  text.substring(0, 500),
+                );
+                setError(
+                  `Server returned an error (status ${response.status}). ` +
+                    "Check Vercel function logs for details.",
+                );
+                return;
+              }
+
+              const data = (await response.json()) as
+                | TimesheetPayload
+                | UploadError;
+
+              if (
+                !response.ok ||
+                !data ||
+                ("ok" in data && data.ok === false)
+              ) {
+                const message =
+                  "error" in data
+                    ? data.error
+                    : "Failed to parse file on server";
+                setError(message);
+                return;
+              }
+
+              const rows = (data as TimesheetPayload).rows.map((row) => ({
+                ...row,
+                attendanceStatus: row.attendanceStatus ?? "full_day",
+              }));
+
+              hydrateFromServer({ ...(data as TimesheetPayload), rows });
+              const mergedCount =
+                (data as TimesheetPayload).mergedFromDatabaseCount ?? 0;
+              if (mergedCount > 0) {
+                setUploadMessage(
+                  `Merged ${mergedCount} existing row${mergedCount === 1 ? "" : "s"} from the database.`,
+                );
+              }
+              const dupCheck = flagUploadDuplicates(rows);
+              if (dupCheck.hasDuplicates) {
+                setPreviewError(
+                  "Each employee can only have one row per date. Fix duplicates before saving.",
+                );
+                if (dupCheck.invalidMap) setInvalidFields(dupCheck.invalidMap);
+                if (dupCheck.firstIndex !== undefined)
+                  scrollToRow(`preview-row-upload-${dupCheck.firstIndex}`);
+              } else {
+                setInvalidFields({});
+                setPreviewError(null);
+              }
+              loadEmployees();
+              setEntryMode("upload");
+              window.dispatchEvent(new CustomEvent("timesheet-updated"));
+              return;
+            }
+            throw parseError;
+          }
+        }
+      } else if (fileName.endsWith(".pdf")) {
+        // PDF still needs server-side parsing - upload to API
+        const body = new FormData();
+        body.append("file", file);
+
+        const response = await fetch("/api/timesheets/upload", {
+          method: "POST",
+          body,
+        });
+        const data = (await response.json()) as TimesheetPayload | UploadError;
+
+        if (!response.ok || !data || ("ok" in data && data.ok === false)) {
+          const message =
+            "error" in data ? data.error : "Failed to parse PDF file";
+          setError(message);
+          return;
+        }
+
+        const rows = (data as TimesheetPayload).rows.map((row) => ({
+          ...row,
+          attendanceStatus: row.attendanceStatus ?? "full_day",
+        }));
+
+        hydrateFromServer({ ...(data as TimesheetPayload), rows });
+        const mergedCount =
+          (data as TimesheetPayload).mergedFromDatabaseCount ?? 0;
+        if (mergedCount > 0) {
+          setUploadMessage(
+            `Merged ${mergedCount} existing row${mergedCount === 1 ? "" : "s"} from the database.`,
+          );
+        }
+        const dupCheck = flagUploadDuplicates(rows);
+        if (dupCheck.hasDuplicates) {
+          setPreviewError(
+            "Each employee can only have one row per date. Fix duplicates before saving.",
+          );
+          if (dupCheck.invalidMap) setInvalidFields(dupCheck.invalidMap);
+          if (dupCheck.firstIndex !== undefined)
+            scrollToRow(`preview-row-upload-${dupCheck.firstIndex}`);
+        } else {
+          setInvalidFields({});
+          setPreviewError(null);
+        }
+        loadEmployees();
+        setEntryMode("upload");
+        window.dispatchEvent(new CustomEvent("timesheet-updated"));
+        return;
+      } else {
+        setError(
+          "Unsupported file type. Upload Excel (.xlsx/.xls), CSV, or PDF.",
+        );
+        return;
+      }
+
+      // Send parsed data to API for merging with existing records
+      const response = await fetch("/api/timesheets/upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          parsedData: parseResult.rows,
+          fileName: parseResult.fileName,
+          format: parseResult.format,
+          startDate: parseResult.startDate,
+          endDate: parseResult.endDate,
+        }),
+      });
+
       const data = (await response.json()) as TimesheetPayload | UploadError;
 
       if (!response.ok || !data || ("ok" in data && data.ok === false)) {
-        const message = "error" in data ? data.error : "Failed to parse file";
+        const message =
+          "error" in data ? data.error : "Failed to process parsed data";
         setError(message);
         return;
       }
 
-      const rows = (data as TimesheetPayload).rows.map((row) => ({
+      const processedRows = (data as TimesheetPayload).rows.map((row) => ({
         ...row,
         attendanceStatus: row.attendanceStatus ?? "full_day",
       }));
 
-      hydrateFromServer({ ...(data as TimesheetPayload), rows });
-      const mergedCount = (data as TimesheetPayload).mergedFromDatabaseCount ?? 0;
+      hydrateFromServer({ ...(data as TimesheetPayload), rows: processedRows });
+      const mergedCount =
+        (data as TimesheetPayload).mergedFromDatabaseCount ?? 0;
       if (mergedCount > 0) {
-        setUploadMessage(`Merged ${mergedCount} existing row${mergedCount === 1 ? "" : "s"} from the database.`);
+        setUploadMessage(
+          `Merged ${mergedCount} existing row${mergedCount === 1 ? "" : "s"} from the database.`,
+        );
       }
-      const dupCheck = flagUploadDuplicates(rows);
+      const dupCheck = flagUploadDuplicates(processedRows);
       if (dupCheck.hasDuplicates) {
-        setPreviewError("Each employee can only have one row per date. Fix duplicates before saving.");
+        setPreviewError(
+          "Each employee can only have one row per date. Fix duplicates before saving.",
+        );
         if (dupCheck.invalidMap) setInvalidFields(dupCheck.invalidMap);
-        if (dupCheck.firstIndex !== undefined) scrollToRow(`preview-row-upload-${dupCheck.firstIndex}`);
+        if (dupCheck.firstIndex !== undefined)
+          scrollToRow(`preview-row-upload-${dupCheck.firstIndex}`);
       } else {
         setInvalidFields({});
         setPreviewError(null);
@@ -781,7 +1054,9 @@ export function TimesheetUpload() {
     }
 
     const next: ManualRow = {
-      id: manualEditingId ?? `manual-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      id:
+        manualEditingId ??
+        `manual-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       employeeName: manualEmployee.trim(),
       date: manualDate,
       totalHours: parsedHours,
@@ -791,10 +1066,14 @@ export function TimesheetUpload() {
 
     setManualRows((rows) => {
       const exists = rows.some((row) => row.id === next.id);
-      return exists ? rows.map((row) => (row.id === next.id ? { ...row, ...next } : row)) : [...rows, next];
+      return exists
+        ? rows.map((row) => (row.id === next.id ? { ...row, ...next } : row))
+        : [...rows, next];
     });
     setError(null);
-    setManualMessage(manualEditingId ? "Manual row updated." : "Manual row added.");
+    setManualMessage(
+      manualEditingId ? "Manual row updated." : "Manual row added.",
+    );
     resetManualForm();
   };
 
@@ -817,7 +1096,9 @@ export function TimesheetUpload() {
 
   const handleManualSoftDelete = (id: string) => {
     setManualRows((rows) => {
-      return rows.map((row) => (row.id === id ? { ...row, isSoftDeleted: !row.isSoftDeleted } : row));
+      return rows.map((row) =>
+        row.id === id ? { ...row, isSoftDeleted: !row.isSoftDeleted } : row,
+      );
     });
   };
 
@@ -835,10 +1116,15 @@ export function TimesheetUpload() {
       (row) =>
         !row.isSoftDeleted &&
         row.employeeName.trim() &&
-        row.employeeName.toLowerCase() === effectiveEmployee.toLowerCase()
+        row.employeeName.toLowerCase() === effectiveEmployee.toLowerCase(),
     );
 
-    const negativeHours = active.filter((row) => row.totalHours !== null && row.totalHours !== undefined && Number(row.totalHours) < 0);
+    const negativeHours = active.filter(
+      (row) =>
+        row.totalHours !== null &&
+        row.totalHours !== undefined &&
+        Number(row.totalHours) < 0,
+    );
     if (negativeHours.length) {
       setPreviewError("Hours cannot be negative.");
       const invalidMap: Record<string, string[]> = {};
@@ -862,12 +1148,19 @@ export function TimesheetUpload() {
       const status = row.attendanceStatus ?? "full_day";
       const requiresTime = status !== "absent";
       const missingBase = !row.employeeName.trim() || !row.date || !row.dept;
-      const missingTime = requiresTime && (!row.timeIn || !row.timeOut || row.totalHours === null || row.totalHours === undefined);
+      const missingTime =
+        requiresTime &&
+        (!row.timeIn ||
+          !row.timeOut ||
+          row.totalHours === null ||
+          row.totalHours === undefined);
       return missingBase || missingTime;
     });
 
     if (invalid.length) {
-                        setPreviewError("Add employee, date, time in/out, hours, and department for every row before saving.");
+      setPreviewError(
+        "Add employee, date, time in/out, hours, and department for every row before saving.",
+      );
       const invalidMap: Record<string, string[]> = {};
       invalid.forEach((row) => {
         const status = row.attendanceStatus ?? "full_day";
@@ -878,7 +1171,10 @@ export function TimesheetUpload() {
           ...(row.dept ? [] : ["dept"]),
           ...(requiresTime && !row.timeIn ? ["timeIn"] : []),
           ...(requiresTime && !row.timeOut ? ["timeOut"] : []),
-          ...(requiresTime && (row.totalHours === null || row.totalHours === undefined) ? ["totalHours"] : []),
+          ...(requiresTime &&
+          (row.totalHours === null || row.totalHours === undefined)
+            ? ["totalHours"]
+            : []),
         ];
       });
       setInvalidFields(invalidMap);
@@ -886,8 +1182,17 @@ export function TimesheetUpload() {
         const status = row.attendanceStatus ?? "full_day";
         const requiresTime = status !== "absent";
         const missingBase = !row.employeeName.trim() || !row.date || !row.dept;
-        const missingTime = requiresTime && (row.totalHours === null || row.totalHours === undefined || !row.timeIn || !row.timeOut);
-        return !row.isSoftDeleted && row.employeeName.toLowerCase() === effectiveEmployee.toLowerCase() && (missingBase || missingTime);
+        const missingTime =
+          requiresTime &&
+          (row.totalHours === null ||
+            row.totalHours === undefined ||
+            !row.timeIn ||
+            !row.timeOut);
+        return (
+          !row.isSoftDeleted &&
+          row.employeeName.toLowerCase() === effectiveEmployee.toLowerCase() &&
+          (missingBase || missingTime)
+        );
       });
       if (firstIdx >= 0) {
         const id = `preview-row-${withBulk[firstIdx].id ?? firstIdx}`;
@@ -897,17 +1202,27 @@ export function TimesheetUpload() {
     }
 
     const duplicateIds = active
-      .filter((row) => row.date && (duplicateKeys.get(`${row.employeeName.trim().toLowerCase()}|${row.date}`) ?? 0) > 1)
+      .filter(
+        (row) =>
+          row.date &&
+          (duplicateKeys.get(
+            `${row.employeeName.trim().toLowerCase()}|${row.date}`,
+          ) ?? 0) > 1,
+      )
       .map((row) => row.id);
 
     if (duplicateIds.length) {
-      setPreviewError("Each employee can only have one row per date. Remove duplicates before saving.");
+      setPreviewError(
+        "Each employee can only have one row per date. Remove duplicates before saving.",
+      );
       const invalidMap: Record<string, string[]> = {};
       duplicateIds.forEach((id) => {
         invalidMap[id] = ["date"];
       });
       setInvalidFields(invalidMap);
-      const firstDuplicate = withBulk.find((row) => duplicateIds.includes(row.id));
+      const firstDuplicate = withBulk.find((row) =>
+        duplicateIds.includes(row.id),
+      );
       if (firstDuplicate) {
         scrollToRow(`preview-row-${firstDuplicate.id}`);
       }
@@ -926,9 +1241,12 @@ export function TimesheetUpload() {
   const validateUploadPreview = (rows: ParsedTimesheetRow[]) => {
     const dupCheck = flagUploadDuplicates(rows);
     if (dupCheck.hasDuplicates) {
-      setPreviewError("Each employee can only have one row per date. Fix duplicates before saving.");
+      setPreviewError(
+        "Each employee can only have one row per date. Fix duplicates before saving.",
+      );
       if (dupCheck.invalidMap) setInvalidFields(dupCheck.invalidMap);
-      if (dupCheck.firstIndex !== undefined) scrollToRow(`preview-row-upload-${dupCheck.firstIndex}`);
+      if (dupCheck.firstIndex !== undefined)
+        scrollToRow(`preview-row-upload-${dupCheck.firstIndex}`);
       return false;
     }
     setInvalidFields({});
@@ -936,26 +1254,32 @@ export function TimesheetUpload() {
     return true;
   };
 
-const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
-  const activeRows = rows.filter((row) => !row.isSoftDeleted);
-  const duplicateKeyCounts = new Map<string, number>();
-  activeRows.forEach((row) => {
-    const emp = (row.employeeId ?? row.employeeName ?? '').toString().trim().toLowerCase();
-    const date = row.date;
-    if (!emp || !date) return;
-    const key = `${emp}|${date}`;
-    duplicateKeyCounts.set(key, (duplicateKeyCounts.get(key) ?? 0) + 1);
-  });
+  const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
+    const activeRows = rows.filter((row) => !row.isSoftDeleted);
+    const duplicateKeyCounts = new Map<string, number>();
+    activeRows.forEach((row) => {
+      const emp = (row.employeeId ?? row.employeeName ?? "")
+        .toString()
+        .trim()
+        .toLowerCase();
+      const date = row.date;
+      if (!emp || !date) return;
+      const key = `${emp}|${date}`;
+      duplicateKeyCounts.set(key, (duplicateKeyCounts.get(key) ?? 0) + 1);
+    });
 
-  const duplicateIndices: number[] = [];
-  rows.forEach((row, i) => {
-    if (row.isSoftDeleted) return;
-    const emp = (row.employeeId ?? row.employeeName ?? '').toString().trim().toLowerCase();
-    const date = row.date;
-    if (!emp || !date) return;
-    const key = `${emp}|${date}`;
-    if ((duplicateKeyCounts.get(key) ?? 0) > 1) duplicateIndices.push(i);
-  });
+    const duplicateIndices: number[] = [];
+    rows.forEach((row, i) => {
+      if (row.isSoftDeleted) return;
+      const emp = (row.employeeId ?? row.employeeName ?? "")
+        .toString()
+        .trim()
+        .toLowerCase();
+      const date = row.date;
+      if (!emp || !date) return;
+      const key = `${emp}|${date}`;
+      if ((duplicateKeyCounts.get(key) ?? 0) > 1) duplicateIndices.push(i);
+    });
 
     if (!duplicateIndices.length) return { hasDuplicates: false } as const;
 
@@ -964,7 +1288,11 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
       invalidMap[`upload-${idxRow}`] = ["date"];
     });
 
-    return { hasDuplicates: true, invalidMap, firstIndex: duplicateIndices[0] } as const;
+    return {
+      hasDuplicates: true,
+      invalidMap,
+      firstIndex: duplicateIndices[0],
+    } as const;
   };
 
   const employeeList = useMemo(() => {
@@ -973,7 +1301,6 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
     if (currentEmployee) set.add(currentEmployee);
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [employees, currentEmployee]);
-
 
   const ensureEmployeeRows = (name: string) => {
     const trimmed = name.trim();
@@ -992,10 +1319,15 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
     setManualEmployee(trimmed);
     setBulkName(trimmed);
     setEntryMode("manual");
-    const found = employees.find((emp) => emp.employeeName.toLowerCase() === trimmed.toLowerCase());
+    const found = employees.find(
+      (emp) => emp.employeeName.toLowerCase() === trimmed.toLowerCase(),
+    );
     loadEmployeeRows(trimmed, found?.id);
     if (!found) {
-      setEmployees((prev) => [...prev, { id: 0, employeeName: trimmed, dayCount: 0 }]);
+      setEmployees((prev) => [
+        ...prev,
+        { id: 0, employeeName: trimmed, dayCount: 0 },
+      ]);
     }
     setManualMessage(`Editing timesheet for ${trimmed}.`);
   };
@@ -1006,7 +1338,9 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
         <PageHeader>Timesheets</PageHeader>
         <div className="flex flex-col gap-3">
           <h1 className="text-3xl font-semibold leading-tight text-[var(--foreground)] md:text-4xl">
-            {entryMode === "upload" ? "Upload timesheets" : "Add timesheets manually"}
+            {entryMode === "upload"
+              ? "Upload timesheets"
+              : "Add timesheets manually"}
           </h1>
 
           <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-white px-1 py-1 text-sm font-semibold w-fit">
@@ -1039,8 +1373,12 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
       <section className="rounded-3xl border border-[var(--border)] bg-[var(--panel)]/90 p-6 shadow-[0_18px_50px_rgba(16,40,94,0.08)]">
         <div className="space-y-4">
           <div className="space-y-1">
-            <p className="text-xs uppercase tracking-[0.26em] text-[var(--muted)]">Employees</p>
-            <h2 className="text-xl font-semibold text-[var(--foreground)]">Employees from upload or manual entry</h2>
+            <p className="text-xs uppercase tracking-[0.26em] text-[var(--muted)]">
+              Employees
+            </p>
+            <h2 className="text-xl font-semibold text-[var(--foreground)]">
+              Employees from upload or manual entry
+            </h2>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             {entryMode === "manual" ? (
@@ -1048,15 +1386,23 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
                 type="button"
                 onClick={() => {
                   const label = `New Employee ${newEmployeeCounter}`;
-                  const seeded = Array.from({ length: 20 }, () => ({ ...createBlankManualRow(), employeeName: label }));
+                  const seeded = Array.from({ length: 20 }, () => ({
+                    ...createBlankManualRow(),
+                    employeeName: label,
+                  }));
                   setManualRows(seeded);
-                  setEmployees((prev) => [...prev, { id: 0, employeeName: label, dayCount: 0 }]);
+                  setEmployees((prev) => [
+                    ...prev,
+                    { id: 0, employeeName: label, dayCount: 0 },
+                  ]);
                   setCurrentEmployee(label);
                   setManualEmployee(label);
                   setBulkName(label);
                   setBulkDept("");
                   setNewEmployeeCounter((c) => c + 1);
-                  setManualMessage(`Created starter rows for ${label}. Name/Dept can be bulk-applied below.`);
+                  setManualMessage(
+                    `Created starter rows for ${label}. Name/Dept can be bulk-applied below.`,
+                  );
                   setError(null);
                 }}
                 className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[var(--accent-strong)] to-[var(--accent)] px-4 py-2 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(47,109,246,0.22)] transition hover:scale-[1.01]"
@@ -1064,7 +1410,11 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
                 Add employee
               </button>
             ) : null}
-            {manualMessage ? <span className="text-xs font-semibold text-emerald-700">{manualMessage}</span> : null}
+            {manualMessage ? (
+              <span className="text-xs font-semibold text-emerald-700">
+                {manualMessage}
+              </span>
+            ) : null}
           </div>
 
           <div className="overflow-hidden rounded-2xl border border-[var(--border)] bg-white/90 shadow-[0_12px_32px_rgba(16,40,94,0.06)]">
@@ -1072,27 +1422,45 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
               <table className="min-w-[620px] w-full text-sm">
                 <thead className="bg-[var(--surface)] text-[var(--muted)]">
                   <tr>
-                    <th className="px-4 py-3 text-left text-[0.7rem] font-semibold uppercase tracking-[0.24em]">Employee</th>
+                    <th className="px-4 py-3 text-left text-[0.7rem] font-semibold uppercase tracking-[0.24em]">
+                      Employee
+                    </th>
                     {entryMode === "manual" ? (
-                      <th className="px-4 py-3 text-left text-[0.7rem] font-semibold uppercase tracking-[0.24em]">Action</th>
+                      <th className="px-4 py-3 text-left text-[0.7rem] font-semibold uppercase tracking-[0.24em]">
+                        Action
+                      </th>
                     ) : null}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--border)]/70 text-[var(--foreground)]">
                   {loadingEmployees ? (
                     <tr>
-                      <td colSpan={entryMode === "manual" ? 2 : 1} className="px-4 py-4 text-center text-[var(--muted)]">Loading employees…</td>
+                      <td
+                        colSpan={entryMode === "manual" ? 2 : 1}
+                        className="px-4 py-4 text-center text-[var(--muted)]"
+                      >
+                        Loading employees…
+                      </td>
                     </tr>
                   ) : null}
                   {employeeList.length === 0 && !loadingEmployees ? (
                     <tr>
-                      <td colSpan={entryMode === "manual" ? 2 : 1} className="px-4 py-4 text-center text-[var(--muted)]">No employees yet. Add one to start a timesheet.</td>
+                      <td
+                        colSpan={entryMode === "manual" ? 2 : 1}
+                        className="px-4 py-4 text-center text-[var(--muted)]"
+                      >
+                        No employees yet. Add one to start a timesheet.
+                      </td>
                     </tr>
                   ) : (
                     employeeList.map((name) => {
-                      const isActive = effectiveEmployee && effectiveEmployee === name;
+                      const isActive =
+                        effectiveEmployee && effectiveEmployee === name;
                       return (
-                         <tr key={name} className={`hover:bg-[var(--surface)]/60 ${isActive ? "bg-[var(--accent)]/5" : ""}`}>
+                        <tr
+                          key={name}
+                          className={`hover:bg-[var(--surface)]/60 ${isActive ? "bg-[var(--accent)]/5" : ""}`}
+                        >
                           <td className="px-4 py-3 font-semibold">{name}</td>
                           {entryMode === "manual" ? (
                             <td className="px-4 py-3">
@@ -1120,19 +1488,28 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
         <section className="rounded-3xl border border-[var(--border)] bg-[var(--panel)]/90 p-6 shadow-[0_18px_50px_rgba(16,40,94,0.08)]">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="text-xs uppercase tracking-[0.26em] text-[var(--muted)]">Upload</p>
-              <h2 className="text-xl font-semibold text-[var(--foreground)]">Upload an Excel, CSV, or PDF</h2>
-
+              <p className="text-xs uppercase tracking-[0.26em] text-[var(--muted)]">
+                Upload
+              </p>
+              <h2 className="text-xl font-semibold text-[var(--foreground)]">
+                Upload an Excel, CSV, or PDF
+              </h2>
             </div>
-            <span className="rounded-full bg-[var(--accent)]/10 px-3 py-1 text-xs font-semibold text-[var(--accent)]">Parser ready</span>
+            <span className="rounded-full bg-[var(--accent)]/10 px-3 py-1 text-xs font-semibold text-[var(--accent)]">
+              Parser ready
+            </span>
           </div>
 
           <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
             <label className="block cursor-pointer rounded-2xl border border-dashed border-[var(--border)] bg-[var(--surface)]/90 px-5 py-5 text-sm text-[var(--muted)] transition hover:border-[var(--accent)]/70">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div className="space-y-1">
-                  <p className="text-base font-semibold text-[var(--foreground)]">Choose a file</p>
-                  <p>Grab the timesheet template. Header casing does not matter.</p>
+                  <p className="text-base font-semibold text-[var(--foreground)]">
+                    Choose a file
+                  </p>
+                  <p>
+                    Grab the timesheet template. Header casing does not matter.
+                  </p>
                 </div>
                 <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-white px-4 py-2 text-xs font-semibold text-[var(--muted)]">
                   {file ? file.name : "Browse"}
@@ -1148,9 +1525,15 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
             </label>
 
             <div className="flex flex-wrap items-center gap-3 text-sm text-[var(--muted)]">
-              <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-white px-3 py-1 font-semibold">Required: Name + Date</div>
-              <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-white px-3 py-1 font-semibold">Optional: Time In / Out / Hours</div>
-              <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-white px-3 py-1 font-semibold">Hours auto-calc when Time In/Out are set</div>
+              <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-white px-3 py-1 font-semibold">
+                Required: Name + Date
+              </div>
+              <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-white px-3 py-1 font-semibold">
+                Optional: Time In / Out / Hours
+              </div>
+              <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-white px-3 py-1 font-semibold">
+                Hours auto-calc when Time In/Out are set
+              </div>
             </div>
 
             <div className="flex items-center gap-3">
@@ -1161,85 +1544,137 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
               >
                 {submitting ? "Parsing…" : "Upload and parse file"}
               </button>
-              {error ? <span className="text-sm font-semibold text-red-600">{error}</span> : null}
-              {!error && submitting ? <span className="text-sm text-[var(--muted)]">Working on it…</span> : null}
+              {error ? (
+                <span className="text-sm font-semibold text-red-600">
+                  {error}
+                </span>
+              ) : null}
+              {!error && submitting ? (
+                <span className="text-sm text-[var(--muted)]">
+                  Working on it…
+                </span>
+              ) : null}
             </div>
           </form>
         </section>
       )}
 
-{false && entryMode === "manual" && (
+      {false && entryMode === "manual" && (
         <section className="rounded-3xl border border-[var(--border)] bg-[var(--panel)]/90 p-6 shadow-[0_18px_50px_rgba(16,40,94,0.08)]">
-            <div className="space-y-4">
-              <div className="space-y-1">
-                <p className="text-xs uppercase tracking-[0.26em] text-[var(--muted)]">Employees</p>
-                <h2 className="text-xl font-semibold text-[var(--foreground)]">Manual/Upload employees</h2>
-                <p className="text-sm text-[var(--muted)]">Up to ~30 employees. Click a row to open their timesheet; “Add employee” seeds 7 starter rows if none exist.</p>
-              </div>
-              <div className="flex flex-wrap items-center gap-3">
-                <button
-                  type="button"
-                    onClick={() => {
-                    const label = `New Employee ${newEmployeeCounter}`;
-                    const seeded = Array.from({ length: 20 }, () => ({ ...createBlankManualRow(), employeeName: label }));
-                    setManualRows(seeded);
-                    setEmployees((prev) => [...prev, { id: 0, employeeName: label, dayCount: 0 }]);
-                    setCurrentEmployee(label);
-                    setManualEmployee(label);
-                    setBulkName(label);
-                    setBulkDept("");
-                    setNewEmployeeCounter((c) => c + 1);
-                    setManualMessage(`Created starter rows for ${label}. Name/Dept can be bulk-applied below.`);
-                    setError(null);
-                  }}
-                  className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[var(--accent-strong)] to-[var(--accent)] px-4 py-2 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(47,109,246,0.22)] transition hover:scale-[1.01]"
-                >
-                  Add employee
-                </button>
-                {manualMessage ? <span className="text-xs font-semibold text-emerald-700">{manualMessage}</span> : null}
-              </div>
+          <div className="space-y-4">
+            <div className="space-y-1">
+              <p className="text-xs uppercase tracking-[0.26em] text-[var(--muted)]">
+                Employees
+              </p>
+              <h2 className="text-xl font-semibold text-[var(--foreground)]">
+                Manual/Upload employees
+              </h2>
+              <p className="text-sm text-[var(--muted)]">
+                Up to ~30 employees. Click a row to open their timesheet; “Add
+                employee” seeds 7 starter rows if none exist.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  const label = `New Employee ${newEmployeeCounter}`;
+                  const seeded = Array.from({ length: 20 }, () => ({
+                    ...createBlankManualRow(),
+                    employeeName: label,
+                  }));
+                  setManualRows(seeded);
+                  setEmployees((prev) => [
+                    ...prev,
+                    { id: 0, employeeName: label, dayCount: 0 },
+                  ]);
+                  setCurrentEmployee(label);
+                  setManualEmployee(label);
+                  setBulkName(label);
+                  setBulkDept("");
+                  setNewEmployeeCounter((c) => c + 1);
+                  setManualMessage(
+                    `Created starter rows for ${label}. Name/Dept can be bulk-applied below.`,
+                  );
+                  setError(null);
+                }}
+                className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[var(--accent-strong)] to-[var(--accent)] px-4 py-2 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(47,109,246,0.22)] transition hover:scale-[1.01]"
+              >
+                Add employee
+              </button>
+              {manualMessage ? (
+                <span className="text-xs font-semibold text-emerald-700">
+                  {manualMessage}
+                </span>
+              ) : null}
+            </div>
 
             <div className="overflow-hidden rounded-2xl border border-[var(--border)] bg-white/90 shadow-[0_12px_32px_rgba(16,40,94,0.06)]">
               <div className="max-h-72 overflow-auto">
                 <table className="min-w-[620px] w-full text-sm">
                   <thead className="bg-[var(--surface)] text-[var(--muted)]">
                     <tr>
-                      <th className="px-4 py-3 text-left text-[0.7rem] font-semibold uppercase tracking-[0.24em]">Employee</th>
-                      <th className="px-4 py-3 text-left text-[0.7rem] font-semibold uppercase tracking-[0.24em]">Days</th>
-                      <th className="px-4 py-3 text-left text-[0.7rem] font-semibold uppercase tracking-[0.24em]">Action</th>
+                      <th className="px-4 py-3 text-left text-[0.7rem] font-semibold uppercase tracking-[0.24em]">
+                        Employee
+                      </th>
+                      <th className="px-4 py-3 text-left text-[0.7rem] font-semibold uppercase tracking-[0.24em]">
+                        Days
+                      </th>
+                      <th className="px-4 py-3 text-left text-[0.7rem] font-semibold uppercase tracking-[0.24em]">
+                        Action
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--border)]/70 text-[var(--foreground)]">
-                  {employeeList.length === 0 ? (
-                    <tr>
-                      <td colSpan={3} className="px-4 py-4 text-center text-[var(--muted)]">No employees yet. Add one to start a timesheet.</td>
-                    </tr>
-                  ) : (
-                    employeeList.map((name) => {
-                      const manualMatches = manualRows.filter((r) => r.employeeName === name);
-                      const uploadMatches = (result?.rows ?? []).filter((r) => r.employeeName === name);
-                      const daySet = new Set<string>();
-                      manualMatches.forEach((r) => { if (r.date) daySet.add(r.date); });
-                      uploadMatches.forEach((r) => { if (r.date) daySet.add(r.date); });
-                      const dayCount = daySet.size;
-                      const isActive = effectiveEmployee && effectiveEmployee === name;
-                      return (
-                        <tr key={name} className={`hover:bg-[var(--surface)]/60 ${isActive ? "bg-[var(--accent)]/5" : ""}`}>
-                          <td className="px-4 py-3 font-semibold">{name}</td>
-                          <td className="px-4 py-3 text-[var(--muted)]">{dayCount || "—"}</td>
-                          <td className="px-4 py-3">
-                            <button
-                              type="button"
-                              onClick={() => ensureEmployeeRows(name)}
-                              className={`rounded-lg border px-3 py-1 text-xs font-semibold transition ${isActive ? "border-[var(--accent)] text-[var(--accent)] bg-white" : "border-[var(--border)] bg-white text-[var(--foreground)] hover:border-[var(--accent)] hover:text-[var(--accent)]"}`}
-                            >
-                              {isActive ? "Viewing" : "Edit timesheet"}
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
+                    {employeeList.length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan={3}
+                          className="px-4 py-4 text-center text-[var(--muted)]"
+                        >
+                          No employees yet. Add one to start a timesheet.
+                        </td>
+                      </tr>
+                    ) : (
+                      employeeList.map((name) => {
+                        const manualMatches = manualRows.filter(
+                          (r) => r.employeeName === name,
+                        );
+                        const uploadMatches = (result?.rows ?? []).filter(
+                          (r) => r.employeeName === name,
+                        );
+                        const daySet = new Set<string>();
+                        manualMatches.forEach((r) => {
+                          if (r.date) daySet.add(r.date);
+                        });
+                        uploadMatches.forEach((r) => {
+                          if (r.date) daySet.add(r.date);
+                        });
+                        const dayCount = daySet.size;
+                        const isActive =
+                          effectiveEmployee && effectiveEmployee === name;
+                        return (
+                          <tr
+                            key={name}
+                            className={`hover:bg-[var(--surface)]/60 ${isActive ? "bg-[var(--accent)]/5" : ""}`}
+                          >
+                            <td className="px-4 py-3 font-semibold">{name}</td>
+                            <td className="px-4 py-3 text-[var(--muted)]">
+                              {dayCount || "—"}
+                            </td>
+                            <td className="px-4 py-3">
+                              <button
+                                type="button"
+                                onClick={() => ensureEmployeeRows(name)}
+                                className={`rounded-lg border px-3 py-1 text-xs font-semibold transition ${isActive ? "border-[var(--accent)] text-[var(--accent)] bg-white" : "border-[var(--border)] bg-white text-[var(--foreground)] hover:border-[var(--accent)] hover:text-[var(--accent)]"}`}
+                              >
+                                {isActive ? "Viewing" : "Edit timesheet"}
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -1248,7 +1683,9 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
 
           {effectiveEmployee ? null : (
             <div className="mt-6 rounded-2xl border border-dashed border-[var(--border)] bg-[var(--surface)] px-5 py-8 text-center text-sm text-[var(--muted)]">
-              <p className="text-base font-semibold text-[var(--foreground)]">Pick or add an employee to edit their rows.</p>
+              <p className="text-base font-semibold text-[var(--foreground)]">
+                Pick or add an employee to edit their rows.
+              </p>
             </div>
           )}
         </section>
@@ -1256,24 +1693,43 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
 
       {(entryMode === "upload" ? result : true) ? (
         <section className="rounded-3xl border border-[var(--border)] bg-[var(--panel)]/90 p-6 shadow-[0_24px_70px_rgba(16,40,94,0.1)]">
-              <div className="space-y-3">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.26em] text-[var(--muted)]">Preview</p>
-                    <h3 className="text-xl font-semibold text-[var(--foreground)]">Showing the first {Math.min(PREVIEW_LIMIT, totalRows)} rows</h3>
-                    <p className="text-sm text-[var(--muted)]">Review, edit, or delete rows before payroll runs.</p>
-                    {loadingRows ? <p className="text-xs font-semibold text-[var(--accent)]">Loading timesheet rows…</p> : null}
-                  </div>
+          <div className="space-y-3">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.26em] text-[var(--muted)]">
+                  Preview
+                </p>
+                <h3 className="text-xl font-semibold text-[var(--foreground)]">
+                  Showing the first {Math.min(PREVIEW_LIMIT, totalRows)} rows
+                </h3>
+                <p className="text-sm text-[var(--muted)]">
+                  Review, edit, or delete rows before payroll runs.
+                </p>
+                {loadingRows ? (
+                  <p className="text-xs font-semibold text-[var(--accent)]">
+                    Loading timesheet rows…
+                  </p>
+                ) : null}
+              </div>
               <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-[var(--muted)]">
-                <span className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-white px-3 py-1">Total rows: {totalRows}</span>
-                <span className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-white px-3 py-1">Source: {entryMode === "upload" ? (result?.format?.toUpperCase() ?? "UPLOAD") : "MANUAL"}</span>
+                <span className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-white px-3 py-1">
+                  Total rows: {totalRows}
+                </span>
+                <span className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-white px-3 py-1">
+                  Source:{" "}
+                  {entryMode === "upload"
+                    ? (result?.format?.toUpperCase() ?? "UPLOAD")
+                    : "MANUAL"}
+                </span>
                 {(startDate || endDate) && (
                   <span className="inline-flex items-center gap-2 rounded-full border border-[var(--accent)] bg-[var(--accent)]/10 px-3 py-1 text-[var(--accent)]">
                     Period: {startDate ?? "—"} to {endDate ?? "—"}
                   </span>
                 )}
                 {entryMode === "upload" && uploadMessage ? (
-                  <span className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[var(--muted)]">{uploadMessage}</span>
+                  <span className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[var(--muted)]">
+                    {uploadMessage}
+                  </span>
                 ) : null}
                 <div className="ml-auto flex flex-wrap items-center gap-2">
                   <div className="flex flex-wrap items-center gap-2 rounded-full border border-[var(--border)] bg-white px-3 py-2 text-xs font-semibold text-[var(--muted)]">
@@ -1310,31 +1766,43 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
               </div>
             </div>
 
-            {entryMode === "manual" && effectiveEmployee && timesheetHistory.length > 0 ? (
+            {entryMode === "manual" &&
+            effectiveEmployee &&
+            timesheetHistory.length > 0 ? (
               <div className="mb-6">
                 <div className="mb-3 flex items-center justify-between">
                   <div>
-                    <h4 className="text-sm font-semibold text-[var(--foreground)]">Timesheet History</h4>
+                    <h4 className="text-sm font-semibold text-[var(--foreground)]">
+                      Timesheet History
+                    </h4>
                     <p className="text-xs text-[var(--muted)]">
-                      Showing {timesheetHistory.length} of {historyPagination.total} uploads
+                      Showing {timesheetHistory.length} of{" "}
+                      {historyPagination.total} uploads
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => handleHistoryPageChange(historyPagination.page - 1)}
+                      onClick={() =>
+                        handleHistoryPageChange(historyPagination.page - 1)
+                      }
                       disabled={historyPagination.page <= 1}
                       className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-semibold text-[var(--muted)] transition hover:bg-[var(--surface)] disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Prev
                     </button>
                     <span className="text-xs font-semibold text-[var(--muted)]">
-                      Page {historyPagination.page} of {historyPagination.totalPages}
+                      Page {historyPagination.page} of{" "}
+                      {historyPagination.totalPages}
                     </span>
                     <button
                       type="button"
-                      onClick={() => handleHistoryPageChange(historyPagination.page + 1)}
-                      disabled={historyPagination.page >= historyPagination.totalPages}
+                      onClick={() =>
+                        handleHistoryPageChange(historyPagination.page + 1)
+                      }
+                      disabled={
+                        historyPagination.page >= historyPagination.totalPages
+                      }
                       className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-semibold text-[var(--muted)] transition hover:bg-[var(--surface)] disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Next
@@ -1358,7 +1826,9 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
                           {selectedTimesheetId === timesheet.id ? "✓" : "📄"}
                         </span>
                         <span className="text-xs font-semibold uppercase tracking-[0.1em] text-[var(--accent)]">
-                          {selectedTimesheetId === timesheet.id ? "Selected" : "Timesheet"}
+                          {selectedTimesheetId === timesheet.id
+                            ? "Selected"
+                            : "Timesheet"}
                         </span>
                       </div>
                       <p className="mb-1 text-sm font-semibold text-[var(--foreground)]">
@@ -1379,7 +1849,9 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
             {entryMode === "manual" && effectiveEmployee ? (
               <div className="grid gap-3 md:grid-cols-2">
                 <div className="flex flex-col gap-1">
-                  <label className="text-xs font-semibold text-[var(--muted)]">Employee name (applies to all rows)</label>
+                  <label className="text-xs font-semibold text-[var(--muted)]">
+                    Employee name (applies to all rows)
+                  </label>
                   <input
                     value={bulkName}
                     onChange={(e) => setBulkName(e.target.value)}
@@ -1387,10 +1859,11 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
                       if (!bulkName.trim()) return;
                       setManualRows((rows) =>
                         rows.map((r) =>
-                          r.employeeName.toLowerCase() === effectiveEmployee.toLowerCase()
+                          r.employeeName.toLowerCase() ===
+                          effectiveEmployee.toLowerCase()
                             ? { ...r, employeeName: bulkName.trim() }
-                            : r
-                        )
+                            : r,
+                        ),
                       );
                       setCurrentEmployee(bulkName.trim());
                       setManualEmployee(bulkName.trim());
@@ -1400,17 +1873,20 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
                   />
                 </div>
                 <div className="flex flex-col gap-1">
-                  <label className="text-xs font-semibold text-[var(--muted)]">Department (applies to all rows)</label>
+                  <label className="text-xs font-semibold text-[var(--muted)]">
+                    Department (applies to all rows)
+                  </label>
                   <input
                     value={bulkDept}
                     onChange={(e) => setBulkDept(e.target.value)}
                     onBlur={() => {
                       setManualRows((rows) =>
                         rows.map((r) =>
-                          r.employeeName.toLowerCase() === effectiveEmployee.toLowerCase()
+                          r.employeeName.toLowerCase() ===
+                          effectiveEmployee.toLowerCase()
                             ? { ...r, dept: bulkDept }
-                            : r
-                        )
+                            : r,
+                        ),
                       );
                     }}
                     placeholder="Department"
@@ -1423,13 +1899,18 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
             {entryMode === "upload" ? (
               <div className="grid gap-3 md:grid-cols-2">
                 <div className="flex flex-col gap-1">
-                  <label className="text-xs font-semibold text-[var(--muted)]">Employee name (applies to all rows)</label>
+                  <label className="text-xs font-semibold text-[var(--muted)]">
+                    Employee name (applies to all rows)
+                  </label>
                   <input
                     value={bulkNameUpload}
                     onChange={(e) => setBulkNameUpload(e.target.value)}
                     onBlur={() => {
                       if (!result || !bulkNameUpload.trim()) return;
-                      const nextRows = result.rows.map((r) => ({ ...r, employeeName: bulkNameUpload.trim() }));
+                      const nextRows = result.rows.map((r) => ({
+                        ...r,
+                        employeeName: bulkNameUpload.trim(),
+                      }));
                       setResult({ ...result, rows: nextRows });
                     }}
                     placeholder="Employee name"
@@ -1437,13 +1918,18 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
                   />
                 </div>
                 <div className="flex flex-col gap-1">
-                  <label className="text-xs font-semibold text-[var(--muted)]">Department (applies to all rows)</label>
+                  <label className="text-xs font-semibold text-[var(--muted)]">
+                    Department (applies to all rows)
+                  </label>
                   <input
                     value={bulkDeptUpload}
                     onChange={(e) => setBulkDeptUpload(e.target.value)}
                     onBlur={() => {
                       if (!result) return;
-                      const nextRows = result.rows.map((r) => ({ ...r, dept: bulkDeptUpload }));
+                      const nextRows = result.rows.map((r) => ({
+                        ...r,
+                        dept: bulkDeptUpload,
+                      }));
                       setResult({ ...result, rows: nextRows });
                     }}
                     placeholder="Department"
@@ -1454,7 +1940,9 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
             ) : null}
 
             {previewError ? (
-              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">{previewError}</div>
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
+                {previewError}
+              </div>
             ) : null}
           </div>
 
@@ -1463,26 +1951,53 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
               <table className="min-w-[1000px] w-full text-sm">
                 <thead className="bg-[var(--surface)] text-[var(--muted)]">
                   <tr>
-                    <th className="px-4 py-3 text-left text-[0.7rem] font-semibold uppercase tracking-[0.24em]">Name</th>
-                    <th className="px-4 py-3 text-left text-[0.7rem] font-semibold uppercase tracking-[0.24em]">Date</th>
-                    <th className="px-4 py-3 text-left text-[0.7rem] font-semibold uppercase tracking-[0.24em]">Time In</th>
-                    <th className="px-4 py-3 text-left text-[0.7rem] font-semibold uppercase tracking-[0.24em]">Time Out</th>
-                    <th className="px-4 py-3 text-left text-[0.7rem] font-semibold uppercase tracking-[0.24em]">Hours</th>
-                    <th className="px-4 py-3 text-left text-[0.7rem] font-semibold uppercase tracking-[0.24em]">Dept</th>
-                    <th className="px-4 py-3 text-left text-[0.7rem] font-semibold uppercase tracking-[0.24em]">Status</th>
-                    <th className="px-4 py-3 text-right text-[0.7rem] font-semibold uppercase tracking-[0.24em]">Action</th>
+                    <th className="px-4 py-3 text-left text-[0.7rem] font-semibold uppercase tracking-[0.24em]">
+                      Name
+                    </th>
+                    <th className="px-4 py-3 text-left text-[0.7rem] font-semibold uppercase tracking-[0.24em]">
+                      Date
+                    </th>
+                    <th className="px-4 py-3 text-left text-[0.7rem] font-semibold uppercase tracking-[0.24em]">
+                      Time In
+                    </th>
+                    <th className="px-4 py-3 text-left text-[0.7rem] font-semibold uppercase tracking-[0.24em]">
+                      Time Out
+                    </th>
+                    <th className="px-4 py-3 text-left text-[0.7rem] font-semibold uppercase tracking-[0.24em]">
+                      Hours
+                    </th>
+                    <th className="px-4 py-3 text-left text-[0.7rem] font-semibold uppercase tracking-[0.24em]">
+                      Dept
+                    </th>
+                    <th className="px-4 py-3 text-left text-[0.7rem] font-semibold uppercase tracking-[0.24em]">
+                      Status
+                    </th>
+                    <th className="px-4 py-3 text-right text-[0.7rem] font-semibold uppercase tracking-[0.24em]">
+                      Action
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--border)]/70 text-[var(--foreground)]">
-                   {previewRows.length === 0 ? (
-                     <tr>
-                       <td colSpan={9} className="px-4 py-6 text-center text-[var(--muted)]">No rows yet. Click “+ Add row” or upload a timesheet to get started.</td>
-                     </tr>
-                   ) : (
-                       previewRows.map((row, idx) => {
+                  {previewRows.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={9}
+                        className="px-4 py-6 text-center text-[var(--muted)]"
+                      >
+                        No rows yet. Click “+ Add row” or upload a timesheet to
+                        get started.
+                      </td>
+                    </tr>
+                  ) : (
+                    previewRows.map((row, idx) => {
                       const isManual = (row as ManualRow).id !== undefined;
-                      const baseKey = isManual ? (row as ManualRow).id : `upload-${idx}`;
-                      const attendanceStatus = (row as ParsedTimesheetRow).attendanceStatus ?? (row as ManualRow).attendanceStatus ?? "full_day";
+                      const baseKey = isManual
+                        ? (row as ManualRow).id
+                        : `upload-${idx}`;
+                      const attendanceStatus =
+                        (row as ParsedTimesheetRow).attendanceStatus ??
+                        (row as ManualRow).attendanceStatus ??
+                        "full_day";
                       const isAbsent = attendanceStatus === "absent";
                       const isEdited = row.isSoftDeleted; // Use for status display
 
@@ -1511,25 +2026,62 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
                             return "Unknown";
                         }
                       };
-                      const name = (row as ParsedTimesheetRow).employeeName ?? (row as ManualRow).employeeName;
-                      const date = (row as ParsedTimesheetRow).date ?? (row as ManualRow).date;
-                      const rawHours = (row as ParsedTimesheetRow).totalHours ?? (row as ManualRow).totalHours;
-                      const dept = (row as ParsedTimesheetRow).dept ?? (row as ManualRow).dept ?? "";
-                      const timeIn = isAbsent ? "" : (row as ParsedTimesheetRow).timeIn ?? (row as ManualRow).timeIn ?? "";
-                      const timeOut = isAbsent ? "" : (row as ParsedTimesheetRow).timeOut ?? (row as ManualRow).timeOut ?? "";
-                      const displayHours = isAbsent ? "" : rawHours ?? "";
+                      const name =
+                        (row as ParsedTimesheetRow).employeeName ??
+                        (row as ManualRow).employeeName;
+                      const date =
+                        (row as ParsedTimesheetRow).date ??
+                        (row as ManualRow).date;
+                      const rawHours =
+                        (row as ParsedTimesheetRow).totalHours ??
+                        (row as ManualRow).totalHours;
+                      const dept =
+                        (row as ParsedTimesheetRow).dept ??
+                        (row as ManualRow).dept ??
+                        "";
+                      const timeIn = isAbsent
+                        ? ""
+                        : ((row as ParsedTimesheetRow).timeIn ??
+                          (row as ManualRow).timeIn ??
+                          "");
+                      const timeOut = isAbsent
+                        ? ""
+                        : ((row as ParsedTimesheetRow).timeOut ??
+                          (row as ManualRow).timeOut ??
+                          "");
+                      const displayHours = isAbsent ? "" : (rawHours ?? "");
 
-                      const updateRow = (field: "employeeName" | "date" | "totalHours" | "dept" | "timeIn" | "timeOut", value: string) => {
-                        if (isAbsent && (field === "timeIn" || field === "timeOut" || field === "totalHours")) return;
+                      const updateRow = (
+                        field:
+                          | "employeeName"
+                          | "date"
+                          | "totalHours"
+                          | "dept"
+                          | "timeIn"
+                          | "timeOut",
+                        value: string,
+                      ) => {
+                        if (
+                          isAbsent &&
+                          (field === "timeIn" ||
+                            field === "timeOut" ||
+                            field === "totalHours")
+                        )
+                          return;
                         if (entryMode === "manual") {
                           setManualRows((rows) => {
                             const updated = rows.map((r) =>
                               (r as ManualRow).id === baseKey
                                 ? {
                                     ...r,
-                                    [field]: field === "totalHours" ? (value === "" ? null : Number(value) || 0) : value,
+                                    [field]:
+                                      field === "totalHours"
+                                        ? value === ""
+                                          ? null
+                                          : Number(value) || 0
+                                        : value,
                                   }
-                                : r
+                                : r,
                             );
                             return updated;
                           });
@@ -1539,7 +2091,10 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
                             const nextRows = [...prev.rows];
                             const nextRow = {
                               ...nextRows[idx],
-                              [field]: field === "totalHours" ? Number(value) || 0 : value,
+                              [field]:
+                                field === "totalHours"
+                                  ? Number(value) || 0
+                                  : value,
                             };
 
                             if (field === "employeeName") {
@@ -1557,16 +2112,21 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
                       };
 
                       const removeRow = () => {
-                        const proceed = typeof window === "undefined"
-                          ? true
-                          : window.confirm(`Delete this row${name ? ` for ${name}` : ""}${date ? ` on ${date}` : ""}? This cannot be undone.`);
+                        const proceed =
+                          typeof window === "undefined"
+                            ? true
+                            : window.confirm(
+                                `Delete this row${name ? ` for ${name}` : ""}${date ? ` on ${date}` : ""}? This cannot be undone.`,
+                              );
                         if (!proceed) return;
                         if (entryMode === "manual") {
                           handleManualDelete(baseKey);
                         } else {
                           setResult((prev) => {
                             if (!prev) return prev;
-                            const nextRows = prev.rows.filter((_, i) => i !== idx);
+                            const nextRows = prev.rows.filter(
+                              (_, i) => i !== idx,
+                            );
                             persistUploadRows(nextRows);
                             setError(null);
                             return { ...prev, rows: nextRows };
@@ -1581,10 +2141,19 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
                           setResult((prev) => {
                             if (!prev) return prev;
                             const nextRows = prev.rows.map((rowItem, i) =>
-                              i === idx ? { ...rowItem, isSoftDeleted: !rowItem.isSoftDeleted } : rowItem
+                              i === idx
+                                ? {
+                                    ...rowItem,
+                                    isSoftDeleted: !rowItem.isSoftDeleted,
+                                  }
+                                : rowItem,
                             );
                             persistUploadRows(nextRows);
-                            setUploadMessage(nextRows[idx].isSoftDeleted ? "Row soft deleted" : "Row restored");
+                            setUploadMessage(
+                              nextRows[idx].isSoftDeleted
+                                ? "Row soft deleted"
+                                : "Row restored",
+                            );
                             return { ...prev, rows: nextRows };
                           });
                         }
@@ -1593,13 +2162,23 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
                       return (
                         <tr
                           key={baseKey}
-                          id={isManual ? `preview-row-${baseKey}` : `preview-row-upload-${idx}`}
+                          id={
+                            isManual
+                              ? `preview-row-${baseKey}`
+                              : `preview-row-upload-${idx}`
+                          }
                           className={`hover:bg-[var(--surface)]/60 ${row.isSoftDeleted ? "opacity-60" : ""}`}
                         >
                           <td className="px-4 py-3">
                             <input
-                              value={entryMode === "manual" ? bulkName || name || "" : name || ""}
-                              onChange={(e) => updateRow("employeeName", e.target.value)}
+                              value={
+                                entryMode === "manual"
+                                  ? bulkName || name || ""
+                                  : name || ""
+                              }
+                              onChange={(e) =>
+                                updateRow("employeeName", e.target.value)
+                              }
                               className={`w-full rounded-lg border px-3 py-2 text-sm shadow-[0_1px_0_rgba(16,40,94,0.04)] ${invalidFields[baseKey]?.includes("employeeName") ? "border-red-400 bg-red-50" : "border-[var(--border)] bg-white"}`}
                               disabled={entryMode === "manual"}
                             />
@@ -1608,7 +2187,9 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
                             <input
                               type="date"
                               value={date ?? ""}
-                              onChange={(e) => updateRow("date", e.target.value)}
+                              onChange={(e) =>
+                                updateRow("date", e.target.value)
+                              }
                               className={`w-full rounded-lg border px-3 py-2 text-sm shadow-[0_1px_0_rgba(16,40,94,0.04)] ${invalidFields[baseKey]?.includes("date") ? "border-red-400 bg-red-50" : "border-[var(--border)] bg-white"}`}
                             />
                           </td>
@@ -1616,7 +2197,9 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
                             <input
                               type="text"
                               value={timeIn}
-                              onChange={(e) => updateRow("timeIn", e.target.value)}
+                              onChange={(e) =>
+                                updateRow("timeIn", e.target.value)
+                              }
                               placeholder="09:00"
                               className={`w-full rounded-lg border px-3 py-2 text-sm shadow-[0_1px_0_rgba(16,40,94,0.04)] ${invalidFields[baseKey]?.includes("timeIn") ? "border-red-400 bg-red-50" : "border-[var(--border)] bg-white"}`}
                               disabled={isAbsent}
@@ -1626,7 +2209,9 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
                             <input
                               type="text"
                               value={timeOut}
-                              onChange={(e) => updateRow("timeOut", e.target.value)}
+                              onChange={(e) =>
+                                updateRow("timeOut", e.target.value)
+                              }
                               placeholder="18:00"
                               className={`w-full rounded-lg border px-3 py-2 text-sm shadow-[0_1px_0_rgba(16,40,94,0.04)] ${invalidFields[baseKey]?.includes("timeOut") ? "border-red-400 bg-red-50" : "border-[var(--border)] bg-white"}`}
                               disabled={isAbsent}
@@ -1636,7 +2221,9 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
                             <input
                               type="number"
                               value={displayHours}
-                              onChange={(e) => updateRow("totalHours", e.target.value)}
+                              onChange={(e) =>
+                                updateRow("totalHours", e.target.value)
+                              }
                               step="0.01"
                               className={`w-full rounded-lg border px-3 py-2 text-sm shadow-[0_1px_0_rgba(16,40,94,0.04)] ${invalidFields[baseKey]?.includes("totalHours") ? "border-red-400 bg-red-50" : "border-[var(--border)] bg-white"}`}
                               disabled={isAbsent}
@@ -1645,15 +2232,23 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
                           <td className="px-4 py-3">
                             <input
                               type="text"
-                              value={entryMode === "manual" ? bulkDept || dept || "" : dept}
-                              onChange={(e) => updateRow("dept", e.target.value)}
+                              value={
+                                entryMode === "manual"
+                                  ? bulkDept || dept || ""
+                                  : dept
+                              }
+                              onChange={(e) =>
+                                updateRow("dept", e.target.value)
+                              }
                               className={`w-full rounded-lg border px-3 py-2 text-sm shadow-[0_1px_0_rgba(16,40,94,0.04)] ${invalidFields[baseKey]?.includes("dept") ? "border-red-400 bg-red-50" : "border-[var(--border)] bg-white"}`}
                               disabled={entryMode === "manual"}
                             />
                           </td>
                           <td className="px-4 py-3">
                             <select
-                              value={row.isSoftDeleted ? "deleted" : attendanceStatus}
+                              value={
+                                row.isSoftDeleted ? "deleted" : attendanceStatus
+                              }
                               onChange={(e) => {
                                 const newStatus = e.target.value;
                                 if (newStatus === "deleted") {
@@ -1665,13 +2260,25 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
                                         (r as ManualRow).id === baseKey
                                           ? {
                                               ...r,
-                                              attendanceStatus: newStatus as "full_day" | "half_day" | "absent",
+                                              attendanceStatus: newStatus as
+                                                | "full_day"
+                                                | "half_day"
+                                                | "absent",
                                               isSoftDeleted: false,
-                                              timeIn: newStatus === "absent" ? null : r.timeIn,
-                                              timeOut: newStatus === "absent" ? null : r.timeOut,
-                                              totalHours: newStatus === "absent" ? null : r.totalHours,
+                                              timeIn:
+                                                newStatus === "absent"
+                                                  ? null
+                                                  : r.timeIn,
+                                              timeOut:
+                                                newStatus === "absent"
+                                                  ? null
+                                                  : r.timeOut,
+                                              totalHours:
+                                                newStatus === "absent"
+                                                  ? null
+                                                  : r.totalHours,
                                             }
-                                          : r
+                                          : r,
                                       );
                                       return updated;
                                     });
@@ -1681,11 +2288,23 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
                                       const nextRows = [...prev.rows];
                                       nextRows[idx] = {
                                         ...nextRows[idx],
-                                        attendanceStatus: newStatus as "full_day" | "half_day" | "absent",
+                                        attendanceStatus: newStatus as
+                                          | "full_day"
+                                          | "half_day"
+                                          | "absent",
                                         isSoftDeleted: false,
-                                        timeIn: newStatus === "absent" ? null : nextRows[idx].timeIn,
-                                        timeOut: newStatus === "absent" ? null : nextRows[idx].timeOut,
-                                        totalHours: newStatus === "absent" ? null : nextRows[idx].totalHours,
+                                        timeIn:
+                                          newStatus === "absent"
+                                            ? null
+                                            : nextRows[idx].timeIn,
+                                        timeOut:
+                                          newStatus === "absent"
+                                            ? null
+                                            : nextRows[idx].timeOut,
+                                        totalHours:
+                                          newStatus === "absent"
+                                            ? null
+                                            : nextRows[idx].totalHours,
                                       };
                                       persistUploadRows(nextRows);
                                       return { ...prev, rows: nextRows };
@@ -1698,7 +2317,9 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
                               <option value="full_day">Full Day</option>
                               <option value="half_day">Half Day</option>
                               <option value="absent">Absent</option>
-                              {row.isSoftDeleted && <option value="deleted">Deleted</option>}
+                              {row.isSoftDeleted && (
+                                <option value="deleted">Deleted</option>
+                              )}
                             </select>
                           </td>
                           <td className="px-4 py-3 text-right">
@@ -1718,48 +2339,75 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
               </table>
             </div>
 
-              <div className="flex items-center justify-between border-t border-[var(--border)] bg-white/90 px-4 py-3 text-sm text-[var(--muted)]">
-                <div className="flex flex-wrap gap-2">
-                  {entryMode === "manual" ? (
-                    <>
-                      <button
-                        type="button"
-                        onClick={handleManualSave}
-                        className="rounded-full bg-[var(--accent)] px-4 py-2 text-xs font-semibold text-white shadow-[0_10px_24px_rgba(47,109,246,0.2)] hover:scale-[1.01]"
-                      >
-                        Save
-                      </button>
-                      {manualMessage ? <span className="text-xs font-semibold text-emerald-700">{manualMessage}</span> : null}
-                    </>
-                  ) : (
-                    <>
+            <div className="flex items-center justify-between border-t border-[var(--border)] bg-white/90 px-4 py-3 text-sm text-[var(--muted)]">
+              <div className="flex flex-wrap gap-2">
+                {entryMode === "manual" ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleManualSave}
+                      className="rounded-full bg-[var(--accent)] px-4 py-2 text-xs font-semibold text-white shadow-[0_10px_24px_rgba(47,109,246,0.2)] hover:scale-[1.01]"
+                    >
+                      Save
+                    </button>
+                    {manualMessage ? (
+                      <span className="text-xs font-semibold text-emerald-700">
+                        {manualMessage}
+                      </span>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
                     <button
                       type="button"
                       onClick={async () => {
                         if (!result) return;
                         setPreviewError(null);
                         setInvalidFields({});
-                        const activeRows = result.rows.filter((row) => !row.isSoftDeleted);
+                        const activeRows = result.rows.filter(
+                          (row) => !row.isSoftDeleted,
+                        );
                         const invalid = activeRows.filter((row) => {
                           const status = row.attendanceStatus ?? "full_day";
                           const requiresTime = status !== "absent";
-                          const missingBase = !row.employeeName?.trim() || !row.date || !row.dept;
-                          const missingTime = requiresTime && (!row.timeIn || !row.timeOut || row.totalHours === null || row.totalHours === undefined);
+                          const missingBase =
+                            !row.employeeName?.trim() || !row.date || !row.dept;
+                          const missingTime =
+                            requiresTime &&
+                            (!row.timeIn ||
+                              !row.timeOut ||
+                              row.totalHours === null ||
+                              row.totalHours === undefined);
                           return missingBase || missingTime;
                         });
                         if (invalid.length) {
-                          setPreviewError("Add employee, date, time in/out, hours, and department for every row before saving.");
+                          setPreviewError(
+                            "Add employee, date, time in/out, hours, and department for every row before saving.",
+                          );
                           const invalidMap: Record<string, string[]> = {};
                           invalid.forEach((row) => {
                             const idxRow = result.rows.indexOf(row);
                             const key = `upload-${idxRow}`;
                             invalidMap[key] = [
-                              ...(row.employeeName?.trim() ? [] : ["employeeName"]),
+                              ...(row.employeeName?.trim()
+                                ? []
+                                : ["employeeName"]),
                               ...(row.date ? [] : ["date"]),
                               ...(row.dept ? [] : ["dept"]),
-                              ...((row.attendanceStatus ?? "full_day") !== "absent" && !row.timeIn ? ["timeIn"] : []),
-                              ...((row.attendanceStatus ?? "full_day") !== "absent" && !row.timeOut ? ["timeOut"] : []),
-                              ...((row.attendanceStatus ?? "full_day") !== "absent" && (row.totalHours === null || row.totalHours === undefined) ? ["totalHours"] : []),
+                              ...((row.attendanceStatus ?? "full_day") !==
+                                "absent" && !row.timeIn
+                                ? ["timeIn"]
+                                : []),
+                              ...((row.attendanceStatus ?? "full_day") !==
+                                "absent" && !row.timeOut
+                                ? ["timeOut"]
+                                : []),
+                              ...((row.attendanceStatus ?? "full_day") !==
+                                "absent" &&
+                              (row.totalHours === null ||
+                                row.totalHours === undefined)
+                                ? ["totalHours"]
+                                : []),
                             ];
                           });
                           setInvalidFields(invalidMap);
@@ -1768,7 +2416,12 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
                               !row.employeeName?.trim() ||
                               !row.date ||
                               !row.dept ||
-                              ((row.attendanceStatus ?? "full_day") !== "absent" && (row.totalHours === null || row.totalHours === undefined || !row.timeIn || !row.timeOut))
+                              ((row.attendanceStatus ?? "full_day") !==
+                                "absent" &&
+                                (row.totalHours === null ||
+                                  row.totalHours === undefined ||
+                                  !row.timeIn ||
+                                  !row.timeOut)),
                           );
                           if (idx >= 0) {
                             scrollToRow(`preview-row-upload-${idx}`);
@@ -1777,7 +2430,10 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
                         }
 
                         const negativeHours = activeRows.filter(
-                          (row) => row.totalHours !== null && row.totalHours !== undefined && Number(row.totalHours) < 0
+                          (row) =>
+                            row.totalHours !== null &&
+                            row.totalHours !== undefined &&
+                            Number(row.totalHours) < 0,
                         );
 
                         if (negativeHours.length) {
@@ -1797,9 +2453,15 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
 
                         const dupCheck = flagUploadDuplicates(result.rows);
                         if (dupCheck.hasDuplicates) {
-                          setPreviewError("Each employee can only have one row per date. Fix duplicates before saving.");
-                          if (dupCheck.invalidMap) setInvalidFields(dupCheck.invalidMap);
-                          if (dupCheck.firstIndex !== undefined) scrollToRow(`preview-row-upload-${dupCheck.firstIndex}`);
+                          setPreviewError(
+                            "Each employee can only have one row per date. Fix duplicates before saving.",
+                          );
+                          if (dupCheck.invalidMap)
+                            setInvalidFields(dupCheck.invalidMap);
+                          if (dupCheck.firstIndex !== undefined)
+                            scrollToRow(
+                              `preview-row-upload-${dupCheck.firstIndex}`,
+                            );
                           return;
                         }
 
@@ -1811,23 +2473,34 @@ const flagUploadDuplicates = (rows: ParsedTimesheetRow[]) => {
                           setUploadMessage("Upload rows saved.");
                         }
                       }}
-                        className="rounded-full bg-[var(--accent)] px-4 py-2 text-xs font-semibold text-white shadow-[0_10px_24px_rgba(47,109,246,0.2)] hover:scale-[1.01]"
-                      >
-                        Save
-                      </button>
-                      {uploadMessage ? <span className="text-xs font-semibold text-emerald-700">{uploadMessage}</span> : null}
-                    </>
-                  )}
-                </div>
-                <span className="text-xs">Showing {Math.min(PREVIEW_LIMIT, totalRows)} of {totalRows} row(s)</span>
+                      className="rounded-full bg-[var(--accent)] px-4 py-2 text-xs font-semibold text-white shadow-[0_10px_24px_rgba(47,109,246,0.2)] hover:scale-[1.01]"
+                    >
+                      Save
+                    </button>
+                    {uploadMessage ? (
+                      <span className="text-xs font-semibold text-emerald-700">
+                        {uploadMessage}
+                      </span>
+                    ) : null}
+                  </>
+                )}
               </div>
+              <span className="text-xs">
+                Showing {Math.min(PREVIEW_LIMIT, totalRows)} of {totalRows}{" "}
+                row(s)
+              </span>
+            </div>
           </div>
         </section>
       ) : (
         <section className="rounded-3xl border border-[var(--border)] bg-[var(--panel)]/90 p-6 shadow-[0_24px_70px_rgba(16,40,94,0.1)]">
           <div className="rounded-2xl border border-dashed border-[var(--border)] bg-[var(--surface)] px-5 py-10 text-center text-sm text-[var(--muted)]">
-            <p className="text-base font-semibold text-[var(--foreground)]">No rows yet</p>
-            <p className="mt-1">Upload a file or switch to Manual to start adding rows.</p>
+            <p className="text-base font-semibold text-[var(--foreground)]">
+              No rows yet
+            </p>
+            <p className="mt-1">
+              Upload a file or switch to Manual to start adding rows.
+            </p>
           </div>
         </section>
       )}

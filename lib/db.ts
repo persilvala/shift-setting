@@ -1,17 +1,22 @@
 import { PrismaClient } from '@prisma/client';
-import { PrismaPg } from '@prisma/adapter-pg';
-import { Pool } from 'pg';
+import { PrismaNeon } from '@prisma/adapter-neon';
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
 };
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
+function createPrismaClient() {
+  try {
+    const adapter = new PrismaNeon({
+      connectionString: process.env.DATABASE_URL || "postgresql://dummy:dummy@localhost:5432/dummy",
+    });
+    return new PrismaClient({ adapter });
+  } catch (error) {
+    console.warn("Failed to initialize Prisma adapter:", error);
+    return new PrismaClient(); // fallback
+  }
+}
 
-const adapter = new PrismaPg(pool as never);
-
-export const prisma = globalForPrisma.prisma ?? new PrismaClient({ adapter });
+export const prisma = globalForPrisma.prisma ?? createPrismaClient();
 
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;

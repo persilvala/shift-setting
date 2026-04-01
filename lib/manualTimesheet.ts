@@ -1,4 +1,4 @@
-// @ts-nocheck
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import type { AttendanceStatus } from "@/lib/types";
 import { prisma } from "@/lib/db";
 

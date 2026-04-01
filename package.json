@@ -9,21 +9,26 @@
     "lint": "eslint",
     "test": "jest",
     "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage"
+    "test:coverage": "jest --coverage",
+    "postinstall": "prisma generate"
   },
   "prisma": {
     "seed": "npx tsx prisma/seed.ts"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.11.1",
-    "@prisma/adapter-pg": "^7.4.2",
+    "@neondatabase/serverless": "^1.0.2",
+    "@prisma/adapter-neon": "^7.6.0",
+    "@prisma/adapter-pg": "^7.6.0",
     "@prisma/client": "^7.0.0",
+    "@vercel/postgres": "^0.10.0",
     "bcryptjs": "^3.0.3",
     "dotenv": "^17.3.1",
+    "exceljs": "^4.4.0",
     "jspdf": "^4.2.0",
     "jspdf-autotable": "^5.0.7",
-    "next": "16.1.6",
-    "next-auth": "^5.0.0-beta.28",
+    "next": "^15.5.14",
+    "next-auth": "^5.0.0-beta.30",
     "pdf-parse": "^2.4.5",
     "pg": "^8.20.0",
     "react": "19.2.3",
@@ -43,7 +48,10 @@
     "@types/react-dom": "^19",
     "@types/xlsx": "^0.0.35",
     "eslint": "^9",
-    "eslint-config-next": "16.1.6",
+    "eslint-config-next": "^15.5.14",
+    "eslint-plugin-jsx-a11y": "^6.10.2",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.0.1",
     "jest": "^30.3.0",
     "jest-environment-jsdom": "^30.3.0",
     "prisma": "^7.0.0",
@@ -51,6 +59,7 @@
     "ts-jest": "^29.4.6",
     "ts-node": "^10.9.2",
     "tsx": "^4.21.0",
-    "typescript": "^5"
+    "typescript": "^5",
+    "typescript-eslint": "^8.58.0"
   }
 }

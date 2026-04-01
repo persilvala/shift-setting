@@ -11,6 +11,7 @@ npm run dev          # Start dev server at http://localhost:3000
 npm run build        # Production build
 npm run start        # Start production server
 npm run lint         # Run ESLint
+npm run typecheck    # Run TypeScript type checking
 ```
 
 ### Testing
