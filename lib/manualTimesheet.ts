@@ -3,6 +3,7 @@ import type { AttendanceStatus } from "@/lib/types";
 import { prisma } from "@/lib/db";
 
 type ManualInputRow = {
+  id?: number | null;
   employeeName: string;
   dept?: string | null;
   date: string;
@@ -13,6 +14,7 @@ type ManualInputRow = {
 };
 
 type NormalizedRow = {
+  id?: number | null;
   employeeName: string;
   dept: string;
   date: string;
@@ -35,6 +37,13 @@ type ManualOptions = {
   fileName?: string | null;
   format?: string | null;
   entrySource?: string | null;
+};
+
+type DeletedRowInput = {
+  id?: number | null;
+  employeeName: string;
+  employeeId?: number | null;
+  date: string;
 };
 
 const MAX_DAYS_PER_EMPLOYEE = 20;
@@ -100,6 +109,7 @@ function normalizeRows(rows: ManualInputRow[]): ValidationResult {
     perEmployeeDates.set(empKey, daySet);
 
     normalized.push({
+      id: raw.id ?? null,
       employeeName,
       dept,
       date,
@@ -156,6 +166,7 @@ async function ensureEmployees(tx: any, employeeNames: string[]) {
 
 function mapRowResponse(row: any) {
   return {
+    id: row.id,
     employeeName: row.employeeName,
     date: row.date instanceof Date ? row.date.toISOString().slice(0, 10) : row.date,
     timeIn: row.beforeNoonIn ?? null,
@@ -167,6 +178,7 @@ function mapRowResponse(row: any) {
     userId: row.userId ?? null,
     employeeId: row.employeeId ?? undefined,
     attendanceStatus: (row.attendanceStatus as AttendanceStatus) ?? "full_day",
+    isPayrollLocked: (row.payrollEntries?.length ?? 0) > 0,
   };
 }
 
@@ -179,6 +191,7 @@ function buildTimesheetDefaults(options?: ManualOptions) {
 
 export async function upsertManualTimesheet(options: {
   rows: ManualInputRow[];
+  deletedRows?: DeletedRowInput[];
   timesheetId?: string | null;
   manualOptions?: ManualOptions;
 }) {
@@ -204,6 +217,13 @@ export async function upsertManualTimesheet(options: {
       const emp = employeeMap.get(row.employeeName.toLowerCase());
       return { ...row, employeeId: emp?.id ?? null };
     });
+
+    const deletedRows = (options.deletedRows ?? []).map((row) => ({
+      id: row.id ?? null,
+      employeeName: row.employeeName?.trim?.() ?? "",
+      employeeId: row.employeeId ?? null,
+      date: row.date,
+    }));
 
     const employeeNamesForValidation = [...new Set(rowsWithEmployees.map((r) => r.employeeName))];
     const existingRowsAll = await tx.timesheetRow.findMany({
@@ -233,16 +253,23 @@ export async function upsertManualTimesheet(options: {
       return { error: Array.from(new Set(deptErrors)).join(" "), status: 400 as const };
     }
 
-    let targetTimesheetId = options.timesheetId ?? null;
+    let targetTimesheetId: number | null = options.timesheetId
+      ? Number(options.timesheetId)
+      : null;
     let targetTimesheetFormat = format;
 
     if (options.timesheetId) {
-      const timesheetLookupId: any = options.timesheetId;
-      const existingTimesheet = await tx.timesheet.findUnique({ where: { id: timesheetLookupId } as any });
+      const timesheetLookupId = Number(options.timesheetId);
+      if (Number.isNaN(timesheetLookupId)) {
+        return { error: "Timesheet not found", status: 404 as const };
+      }
+      const existingTimesheet = await tx.timesheet.findUnique({
+        where: { id: timesheetLookupId } as any,
+      });
       if (!existingTimesheet) {
         return { error: "Timesheet not found", status: 404 as const };
       }
-      targetTimesheetId = (existingTimesheet as any).id as any;
+      targetTimesheetId = Number((existingTimesheet as any).id);
       targetTimesheetFormat = (existingTimesheet as any).format;
     }
 
@@ -257,14 +284,92 @@ export async function upsertManualTimesheet(options: {
           totalRows: 0,
         },
       });
-      targetTimesheetId = (created as any).id as any;
+      targetTimesheetId = Number((created as any).id);
       targetTimesheetFormat = (created as any).format;
     }
 
-    const keys = rowsWithEmployees.map((row) => ({ employeeId: row.employeeId ?? "", date: new Date(row.date) }));
+    if (deletedRows.length) {
+      const deleteById = deletedRows
+        .filter((row) => row.id !== null && row.id !== undefined)
+        .map((row) => row.id as number);
+      const deleteByIdentity = deletedRows.filter(
+        (row) => row.id === null || row.id === undefined,
+      );
+
+      const deleteOr: any[] = [];
+      if (deleteById.length) {
+        deleteOr.push({ id: { in: deleteById } });
+      }
+      deleteByIdentity.forEach((row) => {
+        if (!row.date) return;
+        if (row.employeeId !== null && row.employeeId !== undefined) {
+          deleteOr.push({ employeeId: row.employeeId as any, date: new Date(row.date) });
+          return;
+        }
+        if (row.employeeName) {
+          deleteOr.push({ employeeName: row.employeeName, date: new Date(row.date) });
+        }
+      });
+
+      if (deleteOr.length) {
+        const lockedRows = await tx.timesheetRow.findMany({
+          where: {
+            timesheetId: targetTimesheetId,
+            OR: deleteOr,
+          } as any,
+          select: {
+            id: true,
+            payrollEntries: {
+              select: { id: true },
+              take: 1,
+            },
+          },
+        });
+        const deletableIds = lockedRows
+          .filter((row) => row.payrollEntries.length === 0)
+          .map((row) => row.id);
+
+        if (deletableIds.length) {
+        await tx.timesheetRow.deleteMany({
+          where: {
+            timesheetId: targetTimesheetId,
+            id: { in: deletableIds },
+          } as any,
+        });
+        }
+      }
+    }
+
+    const rowsWithIds = rowsWithEmployees.map((row) => ({
+      ...row,
+      id: row.id ?? null,
+    }));
+
+    const keys = rowsWithIds
+      .filter((row) => row.id === null || row.id === undefined)
+      .map((row) => ({ employeeId: row.employeeId ?? "", date: new Date(row.date) }));
+    const rowIds = rowsWithIds
+      .map((row) => row.id)
+      .filter((rowId): rowId is number => rowId !== null && rowId !== undefined);
     console.log("[upsertManualTimesheet] Looking up existing rows, keys:", keys.length);
-    const existingRows = keys.length
-      ? await tx.timesheetRow.findMany({ where: { OR: keys.map((k) => ({ employeeId: k.employeeId as any, date: k.date })) } as any })
+    const existingRows = keys.length || rowIds.length
+      ? await tx.timesheetRow.findMany({
+          where: {
+            timesheetId: targetTimesheetId,
+            OR: [
+              ...(keys.length
+                ? keys.map((k) => ({ employeeId: k.employeeId as any, date: k.date }))
+                : []),
+              ...(rowIds.length ? [{ id: { in: rowIds } }] : []),
+            ],
+          } as any,
+          include: {
+            payrollEntries: {
+              select: { id: true },
+              take: 1,
+            },
+          },
+        })
       : [];
     console.log("[upsertManualTimesheet] Found existing rows:", existingRows.length);
 
@@ -272,24 +377,39 @@ export async function upsertManualTimesheet(options: {
     existingRows.forEach((row) => {
       existingMap.set(`${row.employeeId ?? ""}|${row.date.toISOString().slice(0, 10)}`, row);
     });
+    const existingById = new Map<number, (typeof existingRows)[number]>();
+    existingRows.forEach((row) => {
+      existingById.set(row.id, row);
+    });
 
     const upserted: (typeof existingRows)[number][] = [];
-    console.log("[upsertManualTimesheet] Rows to process:", rowsWithEmployees.length);
+    console.log("[upsertManualTimesheet] Rows to process:", rowsWithIds.length);
 
-    for (const row of rowsWithEmployees) {
+    for (const row of rowsWithIds) {
       const status = row.attendanceStatus ?? "full_day";
       const key = `${row.employeeId ?? ""}|${row.date}`;
-      const existing = existingMap.get(key);
+      const existing =
+        (row.id !== null && row.id !== undefined
+          ? existingById.get(row.id)
+          : undefined) ?? existingMap.get(key);
       const totalHours = status === "absent" ? null : row.totalHours;
       const timeIn = status === "absent" ? null : row.timeIn;
       const timeOut = status === "absent" ? null : row.timeOut;
       const dept = row.dept?.trim() || existing?.dept || null;
+      const isPayrollLocked = (existing as any)?.payrollEntries?.length > 0;
 
       if (existing) {
+        if (isPayrollLocked) {
+          upserted.push(existing);
+          continue;
+        }
         const updated = await tx.timesheetRow.update({
           where: { id: existing.id },
           data: {
-            timesheetId: targetTimesheetId!,
+            timesheetId: targetTimesheetId,
+            employeeName: row.employeeName,
+            employeeId: row.employeeId ?? undefined,
+            date: new Date(row.date),
             dept,
             beforeNoonIn: timeIn,
             beforeNoonOut: timeOut,
@@ -302,7 +422,7 @@ export async function upsertManualTimesheet(options: {
       } else {
         const created = await tx.timesheetRow.create({
           data: {
-            timesheetId: targetTimesheetId!,
+            timesheetId: targetTimesheetId,
             employeeName: row.employeeName,
             employeeId: row.employeeId ?? undefined,
             date: new Date(row.date),
@@ -319,7 +439,7 @@ export async function upsertManualTimesheet(options: {
     }
 
     await tx.timesheet.update({
-      where: { id: targetTimesheetId! as any },
+      where: { id: targetTimesheetId as any },
       data: {
         totalRows: upserted.length,
         startDate,
@@ -328,8 +448,14 @@ export async function upsertManualTimesheet(options: {
     });
 
     const refreshedRows = await tx.timesheetRow.findMany({
-      where: { timesheetId: targetTimesheetId! as any },
+      where: { timesheetId: targetTimesheetId as any },
       orderBy: [{ date: "asc" }, { employeeName: "asc" }],
+      include: {
+        payrollEntries: {
+          select: { id: true },
+          take: 1,
+        },
+      },
     });
 
     const refreshedDates = refreshedRows.map((r) => r.date).filter(Boolean);

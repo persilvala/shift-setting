@@ -14,6 +14,7 @@ type RowForMap = {
   userId: string | null;
   employeeId: number | null;
   attendanceStatus: string;
+  payrollEntries: { id: number }[];
 };
 
 function mapRow(row: RowForMap): ParsedTimesheetRow {
@@ -30,6 +31,7 @@ function mapRow(row: RowForMap): ParsedTimesheetRow {
     userId: row.userId ?? null,
     employeeId: row.employeeId ?? undefined,
     attendanceStatus: (row.attendanceStatus as AttendanceStatus) ?? 'full_day',
+    isPayrollLocked: row.payrollEntries.length > 0,
   };
 }
 
@@ -38,7 +40,15 @@ export async function GET() {
     const timesheet = await prisma.timesheet.findFirst({
       orderBy: { uploadedAt: 'desc' },
       include: {
-        rows: { orderBy: [{ employeeName: 'asc' }, { date: 'asc' }] },
+        rows: {
+          orderBy: [{ employeeName: 'asc' }, { date: 'asc' }],
+          include: {
+            payrollEntries: {
+              select: { id: true },
+              take: 1,
+            },
+          },
+        },
       },
     });
 

@@ -46,6 +46,7 @@ export type ParsedTimesheetRow = {
   leavePayNoPaid?: number | null;
   payrollDeduction?: number | null;
   remark?: string | null;
+  isPayrollLocked?: boolean;
 };
 
 export type Employee = {

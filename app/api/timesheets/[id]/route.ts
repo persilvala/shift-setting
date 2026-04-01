@@ -56,6 +56,7 @@ export async function GET(
 }
 
 type IncomingRow = {
+  id?: number | null;
   employeeName: string;
   dept?: string | null;
   date: string;
@@ -63,6 +64,13 @@ type IncomingRow = {
   timeOut?: string | null;
   totalHours?: number | null;
   attendanceStatus?: AttendanceStatus;
+};
+
+type DeletedIncomingRow = {
+  id?: number;
+  employeeName: string;
+  employeeId?: number | null;
+  date: string;
 };
 
 export async function PUT(
@@ -77,8 +85,13 @@ export async function PUT(
     }
     const body = await request.json();
     const rows = (body?.rows ?? []) as IncomingRow[];
+    const deletedRows = (body?.deletedRows ?? []) as DeletedIncomingRow[];
 
-    const result = await upsertManualTimesheet({ rows, timesheetId: String(timesheetId) });
+    const result = await upsertManualTimesheet({
+      rows,
+      deletedRows,
+      timesheetId: String(timesheetId),
+    });
 
     if (!result.ok) {
       return NextResponse.json(

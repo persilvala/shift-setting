@@ -33,6 +33,7 @@ export async function GET() {
 }
 
 type ManualInputRow = {
+  id?: number | null;
   employeeName: string;
   dept?: string | null;
   date: string;
@@ -48,14 +49,23 @@ type ManualOptions = {
   entrySource?: string | null;
 };
 
+type DeletedInputRow = {
+  id?: number;
+  employeeName: string;
+  employeeId?: number | null;
+  date: string;
+};
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
     const rows = (body?.rows ?? []) as ManualInputRow[];
+    const deletedRows = (body?.deletedRows ?? []) as DeletedInputRow[];
     const options = (body ?? {}) as ManualOptions;
 
     const result = await upsertManualTimesheet({
       rows,
+      deletedRows,
       manualOptions: {
         fileName: options.fileName,
         format: options.format,

@@ -103,6 +103,182 @@ const parseDateInput = (value: string): Date | null => {
 
 type EmployeeSummary = { id: number; employeeName: string; dayCount: number };
 
+type DiffSummary = {
+  added: number;
+  edited: number;
+  deleted: number;
+};
+
+type RowSnapshot = {
+  key: string;
+  dbId: number | null;
+  employeeName: string;
+  employeeId: number | null;
+  date: string;
+  totalHours: number | null;
+  dept: string;
+  timeIn: string;
+  timeOut: string;
+  attendanceStatus: "full_day" | "half_day" | "absent";
+  isSoftDeleted: boolean;
+};
+
+type SaveConfirmState = {
+  open: boolean;
+  mode: "manual" | "upload" | null;
+  summary: DiffSummary;
+};
+
+type DeletedRowPayload = {
+  id?: number;
+  employeeName: string;
+  employeeId?: number | null;
+  date: string;
+};
+
+const createUploadRowKey = () =>
+  `upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+const ensureUploadRowKey = (row: ParsedTimesheetRow): ParsedTimesheetRow => {
+  const existingKey = (row as any).__rowKey;
+  if (existingKey) return row;
+  return { ...(row as any), __rowKey: createUploadRowKey() };
+};
+
+const ensureUploadRowKeys = (rows: ParsedTimesheetRow[]) =>
+  rows.map((row) => ensureUploadRowKey(row));
+
+const getUploadRowKey = (row: ParsedTimesheetRow, index: number) =>
+  ((row as any).__rowKey as string | undefined) ??
+  `upload-${index}-${row.employeeName ?? ""}-${row.date ?? ""}`;
+
+const createManualRowSnapshot = (row: ManualRow): RowSnapshot => ({
+  key: String(row.id),
+  dbId: typeof row.id === "number" ? row.id : null,
+  employeeName: row.employeeName?.trim() ?? "",
+  employeeId: row.employeeId ?? null,
+  date: row.date ?? "",
+  totalHours: row.totalHours ?? null,
+  dept: row.dept ?? "",
+  timeIn: row.timeIn ?? "",
+  timeOut: row.timeOut ?? "",
+  attendanceStatus: row.attendanceStatus ?? "full_day",
+  isSoftDeleted: row.isSoftDeleted ?? false,
+});
+
+const createUploadRowSnapshot = (
+  row: ParsedTimesheetRow,
+  index: number,
+): RowSnapshot => ({
+  key: getUploadRowKey(row, index),
+  dbId: typeof row.id === "number" ? row.id : null,
+  employeeName: row.employeeName?.trim() ?? "",
+  employeeId: (row as any).employeeId ?? null,
+  date: row.date ?? "",
+  totalHours: row.totalHours ?? null,
+  dept: row.dept ?? "",
+  timeIn: row.timeIn ?? "",
+  timeOut: row.timeOut ?? "",
+  attendanceStatus: row.attendanceStatus ?? "full_day",
+  isSoftDeleted: row.isSoftDeleted ?? false,
+});
+
+const snapshotToManualRow = (snapshot: RowSnapshot): ManualRow => ({
+  id: snapshot.dbId ?? snapshot.key,
+  employeeName: snapshot.employeeName,
+  employeeId: snapshot.employeeId,
+  date: snapshot.date,
+  totalHours: snapshot.totalHours,
+  dept: snapshot.dept,
+  timeIn: snapshot.timeIn,
+  timeOut: snapshot.timeOut,
+  attendanceStatus: snapshot.attendanceStatus,
+  isSoftDeleted: false,
+});
+
+const snapshotToUploadRow = (snapshot: RowSnapshot): ParsedTimesheetRow =>
+  ensureUploadRowKey({
+    id: snapshot.dbId ?? undefined,
+    employeeName: snapshot.employeeName,
+    employeeId: snapshot.employeeId ?? undefined,
+    date: snapshot.date,
+    totalHours: snapshot.totalHours,
+    dept: snapshot.dept,
+    timeIn: snapshot.timeIn,
+    timeOut: snapshot.timeOut,
+    attendanceStatus: snapshot.attendanceStatus,
+    isSoftDeleted: false,
+    issues: [],
+    sourceLine: 0,
+  } as ParsedTimesheetRow);
+
+const snapshotsEqual = (a: RowSnapshot, b: RowSnapshot) =>
+  a.employeeName === b.employeeName &&
+  a.employeeId === b.employeeId &&
+  a.date === b.date &&
+  a.totalHours === b.totalHours &&
+  a.dept === b.dept &&
+  a.timeIn === b.timeIn &&
+  a.timeOut === b.timeOut &&
+  a.attendanceStatus === b.attendanceStatus &&
+  a.isSoftDeleted === b.isSoftDeleted;
+
+const computeDiffSummary = (
+  baseline: RowSnapshot[],
+  current: RowSnapshot[],
+): DiffSummary => {
+  const baselineMap = new Map(baseline.map((row) => [row.key, row]));
+  const currentMap = new Map(current.map((row) => [row.key, row]));
+
+  let added = 0;
+  let edited = 0;
+  let deleted = 0;
+
+  current.forEach((row) => {
+    const previous = baselineMap.get(row.key);
+    if (!previous) {
+      if (!row.isSoftDeleted) added += 1;
+      return;
+    }
+    if (!previous.isSoftDeleted && row.isSoftDeleted) {
+      deleted += 1;
+      return;
+    }
+    if (previous.isSoftDeleted && !row.isSoftDeleted) {
+      edited += 1;
+      return;
+    }
+    if (!snapshotsEqual(previous, row)) edited += 1;
+  });
+
+  baseline.forEach((row) => {
+    if (!currentMap.has(row.key) && !row.isSoftDeleted) {
+      deleted += 1;
+    }
+  });
+
+  return { added, edited, deleted };
+};
+
+const getDeletedRowPayloads = (
+  baseline: RowSnapshot[],
+  current: RowSnapshot[],
+): DeletedRowPayload[] => {
+  const currentMap = new Map(current.map((row) => [row.key, row]));
+  const deleted = baseline.filter((row) => {
+    if (row.isSoftDeleted) return false;
+    const currentRow = currentMap.get(row.key);
+    return !currentRow || currentRow.isSoftDeleted;
+  });
+
+  return deleted.map((row) => ({
+    ...(row.dbId ? { id: row.dbId } : {}),
+    employeeName: row.employeeName,
+    employeeId: row.employeeId,
+    date: row.date,
+  }));
+};
+
 const mapParsedToManualRow = (
   row: ParsedTimesheetRow,
   index: number,
@@ -164,15 +340,34 @@ export function TimesheetUpload() {
   const [selectedTimesheetId, setSelectedTimesheetId] = useState<number | null>(
     null,
   );
+  const [manualBaselineRows, setManualBaselineRows] = useState<RowSnapshot[]>([]);
+  const [uploadBaselineRows, setUploadBaselineRows] = useState<RowSnapshot[]>([]);
+  const [selectedManualRowKeys, setSelectedManualRowKeys] = useState<string[]>([]);
+  const [selectedUploadRowKeys, setSelectedUploadRowKeys] = useState<string[]>([]);
+  const [showAddEmployeeDialog, setShowAddEmployeeDialog] = useState(false);
+  const [showDateRangeDialog, setShowDateRangeDialog] = useState(false);
+  const [addEmployeeName, setAddEmployeeName] = useState("");
+  const [addEmployeeSeedMode, setAddEmployeeSeedMode] = useState<
+    "single" | "range"
+  >("single");
+  const [addEmployeeSingleDate, setAddEmployeeSingleDate] = useState("");
+  const [saveConfirmState, setSaveConfirmState] = useState<SaveConfirmState>({
+    open: false,
+    mode: null,
+    summary: { added: 0, edited: 0, deleted: 0 },
+  });
 
   const hydrateFromServer = (payload: TimesheetPayload) => {
-    const rows = payload.rows ?? [];
-    setResult(payload);
+    const rows = ensureUploadRowKeys(payload.rows ?? []);
+    setResult({ ...payload, rows });
     setStartDate(payload.startDate ?? null);
     setEndDate(payload.endDate ?? null);
     if (payload.format === "manual" || entryMode === "manual") {
-      setManualRows(rows.map(mapParsedToManualRow));
+      const nextManualRows = rows.map(mapParsedToManualRow);
+      setManualRows(nextManualRows);
+      setManualBaselineRows(nextManualRows.map(createManualRowSnapshot));
     }
+    setUploadBaselineRows(rows.map(createUploadRowSnapshot));
     const tsId =
       payload.timesheetId !== undefined && payload.timesheetId !== null
         ? Number(payload.timesheetId)
@@ -244,9 +439,11 @@ export function TimesheetUpload() {
         const selected =
           scopedTimesheets.find((t) => t.id === selectedTimesheetId) ??
           scopedTimesheets[0];
-        setManualRows(
-          filterRowsForEmployee(selected.rows, name).map(mapParsedToManualRow),
+        const nextManualRows = filterRowsForEmployee(selected.rows, name).map(
+          mapParsedToManualRow,
         );
+        setManualRows(nextManualRows);
+        setManualBaselineRows(nextManualRows.map(createManualRowSnapshot));
         setStartDate(selected.startDate ?? null);
         setEndDate(selected.endDate ?? null);
         setBulkDept(selected.rows[0]?.dept ?? "");
@@ -258,6 +455,7 @@ export function TimesheetUpload() {
           employeeName: name,
         }));
         setManualRows(seeded);
+        setManualBaselineRows([]);
         setStartDate(null);
         setEndDate(null);
         setBulkDept("");
@@ -279,7 +477,9 @@ export function TimesheetUpload() {
         timesheet.rows,
         effectiveEmployee || timesheet.rows[0]?.employeeName || "",
       );
-      setManualRows(scopedRows.map(mapParsedToManualRow));
+      const nextManualRows = scopedRows.map(mapParsedToManualRow);
+      setManualRows(nextManualRows);
+      setManualBaselineRows(nextManualRows.map(createManualRowSnapshot));
       setStartDate(timesheet.startDate ?? null);
       setEndDate(timesheet.endDate ?? null);
       setActiveTimesheetId(timesheetId);
@@ -292,14 +492,17 @@ export function TimesheetUpload() {
     loadEmployeeRows(effectiveEmployee, undefined, newPage);
   };
 
-  const updateTimesheetRows = async (rows: ParsedTimesheetRow[]) => {
+  const updateTimesheetRows = async (
+    rows: ParsedTimesheetRow[],
+    deletedRows: DeletedRowPayload[] = [],
+  ) => {
     if (!activeTimesheetId) return true;
     try {
       setLoadingRows(true);
       const response = await fetch(`/api/timesheets/${activeTimesheetId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rows }),
+        body: JSON.stringify({ rows, deletedRows }),
       });
       const data = await response.json();
       if (!response.ok || !data.ok) {
@@ -319,7 +522,10 @@ export function TimesheetUpload() {
     }
   };
 
-  const saveUploadRows = async (rows: ParsedTimesheetRow[]) => {
+  const saveUploadRows = async (
+    rows: ParsedTimesheetRow[],
+    deletedRows: DeletedRowPayload[] = [],
+  ) => {
     try {
       setLoadingRows(true);
 
@@ -328,6 +534,7 @@ export function TimesheetUpload() {
       }
 
       const payloadRows = rows.map((row) => ({
+        id: typeof row.id === "number" ? row.id : undefined,
         employeeName: row.employeeName,
         dept: row.dept ?? "",
         date: row.date,
@@ -342,6 +549,7 @@ export function TimesheetUpload() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           rows: payloadRows,
+          deletedRows,
           fileName: result?.timesheetId
             ? (result.fileName ?? "upload")
             : result?.format
@@ -472,6 +680,7 @@ export function TimesheetUpload() {
 
       setRangeStart("");
       setRangeEnd("");
+      setShowDateRangeDialog(false);
       return;
     }
 
@@ -525,7 +734,7 @@ export function TimesheetUpload() {
       return;
     }
 
-    const nextRows = [...additions, ...baseResult.rows];
+    const nextRows = ensureUploadRowKeys([...additions, ...baseResult.rows]);
     const validDates = nextRows
       .map((row) => parseDateInput(row.date ?? ""))
       .filter((d): d is Date => Boolean(d));
@@ -554,6 +763,7 @@ export function TimesheetUpload() {
     );
     setRangeStart("");
     setRangeEnd("");
+    setShowDateRangeDialog(false);
   };
 
   const addBlankRow = () => {
@@ -599,7 +809,7 @@ export function TimesheetUpload() {
         attendanceStatus: "full_day",
         isSoftDeleted: false,
       };
-      const nextRows = [blank, ...(base.rows ?? [])];
+      const nextRows = ensureUploadRowKeys([blank, ...(base.rows ?? [])]);
       persistUploadRows(nextRows);
       setUploadMessage("Blank row added. Save to keep it.");
       return { ...base, rows: nextRows };
@@ -705,6 +915,25 @@ export function TimesheetUpload() {
     }
   }, [effectiveEmployee, manualRows]);
 
+  useEffect(() => {
+    setSelectedManualRowKeys([]);
+    setSelectedUploadRowKeys([]);
+  }, [entryMode, effectiveEmployee, selectedTimesheetId]);
+
+  useEffect(() => {
+    setSelectedManualRowKeys((prev) =>
+      prev.filter((key) => manualRows.some((row) => String(row.id) === key)),
+    );
+  }, [manualRows]);
+
+  useEffect(() => {
+    setSelectedUploadRowKeys((prev) =>
+      prev.filter((key) =>
+        (result?.rows ?? []).some((row, idx) => getUploadRowKey(row, idx) === key),
+      ),
+    );
+  }, [result?.rows]);
+
   const handleGeneratePayroll = async () => {
     if (entryMode === "manual") {
       const ok = await persistManualRows(manualRows);
@@ -754,7 +983,10 @@ export function TimesheetUpload() {
     router.push("/admin/payroll");
   };
 
-  const persistManualRows = async (rows: ManualRow[]) => {
+  const persistManualRows = async (
+    rows: ManualRow[],
+    deletedRows: DeletedRowPayload[] = [],
+  ) => {
     const activeRows = rows.filter((row) => !row.isSoftDeleted);
     if (!activeRows.length) {
       setError("Add at least one manual row before saving.");
@@ -764,6 +996,7 @@ export function TimesheetUpload() {
     const payloadRows = activeRows.map((row) => {
       const status = row.attendanceStatus ?? "full_day";
       return {
+        id: typeof row.id === "number" ? row.id : undefined,
         employeeName: row.employeeName,
         dept: row.dept ?? "",
         date: row.date,
@@ -783,7 +1016,7 @@ export function TimesheetUpload() {
       const response = await fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rows: payloadRows }),
+        body: JSON.stringify({ rows: payloadRows, deletedRows }),
       });
 
       const data = (await response.json()) as TimesheetPayload | UploadError;
@@ -1102,15 +1335,16 @@ export function TimesheetUpload() {
     });
   };
 
-  const handleManualSave = async () => {
+  const executeManualSave = async () => {
     setPreviewError(null);
     setInvalidFields({});
-    const withBulk = applyBulkToManualRows(manualRows);
-    setManualRows(withBulk);
     if (!effectiveEmployee) {
       setPreviewError("Choose an employee before saving their rows.");
       return;
     }
+
+    const withBulk = applyBulkToManualRows(manualRows);
+    setManualRows(withBulk);
 
     const active = withBulk.filter(
       (row) =>
@@ -1230,11 +1464,137 @@ export function TimesheetUpload() {
     }
 
     setInvalidFields({});
-    await persistManualRows(withBulk);
+    await persistManualRows(
+      withBulk,
+      getDeletedRowPayloads(
+        manualBaselineRows,
+        withBulk.map(createManualRowSnapshot),
+      ),
+    );
+  };
+
+  const handleManualSave = () => {
+    const withBulk = applyBulkToManualRows(manualRows);
+    setManualRows(withBulk);
+    setPreviewError(null);
+    setInvalidFields({});
+    setSaveConfirmState({
+      open: true,
+      mode: "manual",
+      summary: computeDiffSummary(
+        manualBaselineRows,
+        withBulk.map(createManualRowSnapshot),
+      ),
+    });
+  };
+
+  const executeUploadSave = async () => {
+    if (!result) return;
+    setPreviewError(null);
+    setInvalidFields({});
+    const activeRows = result.rows.filter((row) => !row.isSoftDeleted);
+    const invalid = activeRows.filter((row) => {
+      const status = row.attendanceStatus ?? "full_day";
+      const requiresTime = status !== "absent";
+      const missingBase = !row.employeeName?.trim() || !row.date || !row.dept;
+      const missingTime =
+        requiresTime &&
+        (!row.timeIn ||
+          !row.timeOut ||
+          row.totalHours === null ||
+          row.totalHours === undefined);
+      return missingBase || missingTime;
+    });
+    if (invalid.length) {
+      setPreviewError(
+        "Add employee, date, time in/out, hours, and department for every row before saving.",
+      );
+      const invalidMap: Record<string, string[]> = {};
+      invalid.forEach((row) => {
+        const idxRow = result.rows.indexOf(row);
+        const key = getUploadRowKey(row, idxRow);
+        invalidMap[key] = [
+          ...(row.employeeName?.trim() ? [] : ["employeeName"]),
+          ...(row.date ? [] : ["date"]),
+          ...(row.dept ? [] : ["dept"]),
+          ...((row.attendanceStatus ?? "full_day") !== "absent" && !row.timeIn
+            ? ["timeIn"]
+            : []),
+          ...((row.attendanceStatus ?? "full_day") !== "absent" && !row.timeOut
+            ? ["timeOut"]
+            : []),
+          ...((row.attendanceStatus ?? "full_day") !== "absent" &&
+          (row.totalHours === null || row.totalHours === undefined)
+            ? ["totalHours"]
+            : []),
+        ];
+      });
+      setInvalidFields(invalidMap);
+      const idx = result.rows.findIndex(
+        (row) =>
+          !row.employeeName?.trim() ||
+          !row.date ||
+          !row.dept ||
+          ((row.attendanceStatus ?? "full_day") !== "absent" &&
+            (row.totalHours === null ||
+              row.totalHours === undefined ||
+              !row.timeIn ||
+              !row.timeOut)),
+      );
+      if (idx >= 0) {
+        scrollToRow(`preview-row-upload-${idx}`);
+      }
+      return;
+    }
+
+    const negativeHours = activeRows.filter(
+      (row) =>
+        row.totalHours !== null &&
+        row.totalHours !== undefined &&
+        Number(row.totalHours) < 0,
+    );
+
+    if (negativeHours.length) {
+      setPreviewError("Hours cannot be negative.");
+      const invalidMap: Record<string, string[]> = {};
+      negativeHours.forEach((row) => {
+        const idxRow = result.rows.indexOf(row);
+        invalidMap[getUploadRowKey(row, idxRow)] = ["totalHours"];
+      });
+      setInvalidFields(invalidMap);
+      const first = result.rows.indexOf(negativeHours[0]);
+      if (first >= 0) {
+        scrollToRow(`preview-row-upload-${first}`);
+      }
+      return;
+    }
+
+    const dupCheck = flagUploadDuplicates(result.rows);
+    if (dupCheck.hasDuplicates) {
+      setPreviewError(
+        "Each employee can only have one row per date. Fix duplicates before saving.",
+      );
+      if (dupCheck.invalidMap) setInvalidFields(dupCheck.invalidMap);
+      if (dupCheck.firstIndex !== undefined)
+        scrollToRow(`preview-row-upload-${dupCheck.firstIndex}`);
+      return;
+    }
+
+    setInvalidFields({});
+    const deletedRows = getDeletedRowPayloads(
+      uploadBaselineRows,
+      result.rows.map(createUploadRowSnapshot),
+    );
+    const ok = activeTimesheetId
+      ? await updateTimesheetRows(result.rows, deletedRows)
+      : await saveUploadRows(result.rows, deletedRows);
+    if (ok) {
+      setUploadMessage("Upload rows saved.");
+    }
   };
 
   const persistUploadRows = (rows: ParsedTimesheetRow[]) => {
-    const active = rows.filter((row) => !row.isSoftDeleted);
+    const active = ensureUploadRowKeys(rows).filter((row) => !row.isSoftDeleted);
     setResult((prev) => (prev ? { ...prev, rows: active } : prev));
   };
 
@@ -1285,7 +1645,7 @@ export function TimesheetUpload() {
 
     const invalidMap: Record<string, string[]> = {};
     duplicateIndices.forEach((idxRow) => {
-      invalidMap[`upload-${idxRow}`] = ["date"];
+      invalidMap[getUploadRowKey(rows[idxRow], idxRow)] = ["date"];
     });
 
     return {
@@ -1330,6 +1690,251 @@ export function TimesheetUpload() {
       ]);
     }
     setManualMessage(`Editing timesheet for ${trimmed}.`);
+  };
+
+  const manualDiffSummary = useMemo(
+    () => computeDiffSummary(manualBaselineRows, manualRows.map(createManualRowSnapshot)),
+    [manualBaselineRows, manualRows],
+  );
+
+  const uploadDiffSummary = useMemo(
+    () =>
+      computeDiffSummary(
+        uploadBaselineRows,
+        (result?.rows ?? []).map(createUploadRowSnapshot),
+      ),
+    [result?.rows, uploadBaselineRows],
+  );
+
+  const isPreviewRowPayrollLocked = (row: ParsedTimesheetRow | ManualRow) =>
+    Boolean((row as ParsedTimesheetRow).isPayrollLocked);
+
+  const previewSelection =
+    entryMode === "manual" ? selectedManualRowKeys : selectedUploadRowKeys;
+
+  const allPreviewSelected =
+    previewRows.filter((row) => !isPreviewRowPayrollLocked(row)).length > 0 &&
+    previewRows
+      .filter((row) => !isPreviewRowPayrollLocked(row))
+      .every((row, idx) => {
+      if (entryMode === "manual") {
+        return selectedManualRowKeys.includes(String((row as ManualRow).id));
+      }
+      return selectedUploadRowKeys.includes(
+        getUploadRowKey(row as ParsedTimesheetRow, idx),
+      );
+      });
+
+  const togglePreviewRowSelection = (key: string, isLocked = false) => {
+    if (isLocked) return;
+    if (entryMode === "manual") {
+      setSelectedManualRowKeys((prev) =>
+        prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key],
+      );
+      return;
+    }
+    setSelectedUploadRowKeys((prev) =>
+      prev.includes(key) ? prev.filter((item) => item !== key) : [...prev, key],
+    );
+  };
+
+  const toggleSelectAllPreviewRows = () => {
+    if (entryMode === "manual") {
+      setSelectedManualRowKeys(
+        allPreviewSelected
+          ? []
+          : previewRows
+              .filter((row) => !isPreviewRowPayrollLocked(row))
+              .map((row) => String((row as ManualRow).id)),
+      );
+      return;
+    }
+    setSelectedUploadRowKeys(
+        allPreviewSelected
+        ? []
+        : previewRows
+            .filter((row) => !isPreviewRowPayrollLocked(row))
+            .map((row, idx) => getUploadRowKey(row as ParsedTimesheetRow, idx)),
+    );
+  };
+
+  const deleteSelectedRows = () => {
+    if (!previewSelection.length) return;
+    if (entryMode === "manual") {
+      setManualRows((rows) =>
+        rows.filter(
+          (row) =>
+            row.isPayrollLocked || !selectedManualRowKeys.includes(String(row.id)),
+        ),
+      );
+      setSelectedManualRowKeys([]);
+      setManualMessage(
+        `${previewSelection.length} row${previewSelection.length === 1 ? "" : "s"} deleted.`,
+      );
+      setError(null);
+      return;
+    }
+
+    setResult((prev) => {
+      if (!prev) return prev;
+      const nextRows = prev.rows.filter(
+        (row, idx) =>
+          row.isPayrollLocked ||
+          !selectedUploadRowKeys.includes(getUploadRowKey(row, idx)),
+      );
+      persistUploadRows(nextRows);
+      return { ...prev, rows: nextRows };
+    });
+    setSelectedUploadRowKeys([]);
+    setUploadMessage(
+      `${previewSelection.length} row${previewSelection.length === 1 ? "" : "s"} deleted.`,
+    );
+    setError(null);
+  };
+
+  const openAddEmployeeDialog = () => {
+    setAddEmployeeName(`New Employee ${newEmployeeCounter}`);
+    setAddEmployeeSeedMode("single");
+    setAddEmployeeSingleDate("");
+    setRangeStart("");
+    setRangeEnd("");
+    setShowAddEmployeeDialog(true);
+  };
+
+  const createSeededRows = (
+    employeeName: string,
+    dates: string[],
+  ): ManualRow[] =>
+    dates.map((date) => ({
+      ...createBlankManualRow(),
+      employeeName,
+      date,
+      dept: bulkDept || "",
+    }));
+
+  const submitAddEmployeeDialog = () => {
+    const trimmedName = addEmployeeName.trim();
+    if (!trimmedName) {
+      setError("Enter an employee name before adding.");
+      return;
+    }
+
+    const dates: string[] = [];
+    if (addEmployeeSeedMode === "single") {
+      if (!addEmployeeSingleDate) {
+        setError("Choose a date to seed the employee rows.");
+        return;
+      }
+      dates.push(addEmployeeSingleDate);
+    } else {
+      const start = parseDateInput(rangeStart);
+      const end = parseDateInput(rangeEnd);
+      if (!start || !end) {
+        setError("Choose a valid start and end date.");
+        return;
+      }
+      if (start.getTime() > end.getTime()) {
+        setError("Start date must be on or before end date.");
+        return;
+      }
+      const cursor = new Date(start);
+      while (cursor.getTime() <= end.getTime()) {
+        dates.push(cursor.toISOString().slice(0, 10));
+        cursor.setUTCDate(cursor.getUTCDate() + 1);
+      }
+    }
+
+    const seededRows = createSeededRows(trimmedName, dates);
+    setManualRows(seededRows);
+    setManualBaselineRows([]);
+    setCurrentEmployee(trimmedName);
+    setManualEmployee(trimmedName);
+    setBulkName(trimmedName);
+    setBulkDept("");
+    setEntryMode("manual");
+    setActiveTimesheetId(null);
+    setSelectedTimesheetId(null);
+    setTimesheetHistory([]);
+    setHistoryPagination({ page: 1, limit: 5, total: 0, totalPages: 1 });
+    setEmployees((prev) =>
+      prev.some((item) => item.employeeName.toLowerCase() === trimmedName.toLowerCase())
+        ? prev
+        : [...prev, { id: 0, employeeName: trimmedName, dayCount: 0 }],
+    );
+    setNewEmployeeCounter((count) => count + 1);
+    setManualMessage(
+      `Created ${seededRows.length} starter row${seededRows.length === 1 ? "" : "s"} for ${trimmedName}.`,
+    );
+    setError(null);
+    setShowAddEmployeeDialog(false);
+  };
+
+  const openSaveConfirmation = (mode: "manual" | "upload") => {
+    setSaveConfirmState({
+      open: true,
+      mode,
+      summary: mode === "manual" ? manualDiffSummary : uploadDiffSummary,
+    });
+  };
+
+  const closeSaveConfirmation = () => {
+    setSaveConfirmState({
+      open: false,
+      mode: null,
+      summary: { added: 0, edited: 0, deleted: 0 },
+    });
+  };
+
+  const restoreDeletedRows = () => {
+    if (saveConfirmState.mode === "manual") {
+      const currentKeys = new Set(manualRows.map((row) => row.id));
+      const restoredRows = manualBaselineRows
+        .filter((row) => !row.isSoftDeleted && !currentKeys.has(row.key))
+        .map(snapshotToManualRow);
+
+      if (!restoredRows.length) return;
+
+      const nextRows = [...restoredRows, ...manualRows];
+      setManualRows(nextRows);
+      setSaveConfirmState({
+        open: true,
+        mode: "manual",
+        summary: computeDiffSummary(
+          manualBaselineRows,
+          nextRows.map(createManualRowSnapshot),
+        ),
+      });
+      setManualMessage(
+        `Restored ${restoredRows.length} deleted row${restoredRows.length === 1 ? "" : "s"}.`,
+      );
+      return;
+    }
+
+    if (saveConfirmState.mode === "upload") {
+      const currentRows = result?.rows ?? [];
+      const currentKeys = new Set(
+        currentRows.map((row, index) => getUploadRowKey(row, index)),
+      );
+      const restoredRows = uploadBaselineRows
+        .filter((row) => !row.isSoftDeleted && !currentKeys.has(row.key))
+        .map(snapshotToUploadRow);
+
+      if (!restoredRows.length) return;
+
+      const nextRows = ensureUploadRowKeys([...restoredRows, ...currentRows]);
+      setResult((prev) => (prev ? { ...prev, rows: nextRows } : prev));
+      setSaveConfirmState({
+        open: true,
+        mode: "upload",
+        summary: computeDiffSummary(
+          uploadBaselineRows,
+          nextRows.map(createUploadRowSnapshot),
+        ),
+      });
+      setUploadMessage(
+        `Restored ${restoredRows.length} deleted row${restoredRows.length === 1 ? "" : "s"}.`,
+      );
+    }
   };
 
   return (
@@ -1384,27 +1989,7 @@ export function TimesheetUpload() {
             {entryMode === "manual" ? (
               <button
                 type="button"
-                onClick={() => {
-                  const label = `New Employee ${newEmployeeCounter}`;
-                  const seeded = Array.from({ length: 20 }, () => ({
-                    ...createBlankManualRow(),
-                    employeeName: label,
-                  }));
-                  setManualRows(seeded);
-                  setEmployees((prev) => [
-                    ...prev,
-                    { id: 0, employeeName: label, dayCount: 0 },
-                  ]);
-                  setCurrentEmployee(label);
-                  setManualEmployee(label);
-                  setBulkName(label);
-                  setBulkDept("");
-                  setNewEmployeeCounter((c) => c + 1);
-                  setManualMessage(
-                    `Created starter rows for ${label}. Name/Dept can be bulk-applied below.`,
-                  );
-                  setError(null);
-                }}
+                onClick={openAddEmployeeDialog}
                 className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[var(--accent-strong)] to-[var(--accent)] px-4 py-2 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(47,109,246,0.22)] transition hover:scale-[1.01]"
               >
                 Add employee
@@ -1732,24 +2317,9 @@ export function TimesheetUpload() {
                   </span>
                 ) : null}
                 <div className="ml-auto flex flex-wrap items-center gap-2">
-                  <div className="flex flex-wrap items-center gap-2 rounded-full border border-[var(--border)] bg-white px-3 py-2 text-xs font-semibold text-[var(--muted)]">
-                    <input
-                      type="date"
-                      value={rangeStart}
-                      onChange={(e) => setRangeStart(e.target.value)}
-                      className="rounded-lg border border-[var(--border)] px-2 py-1 text-xs text-[var(--foreground)] focus:border-[var(--accent)] focus:outline-none"
-                    />
-                    <span className="text-[var(--muted)]">to</span>
-                    <input
-                      type="date"
-                      value={rangeEnd}
-                      onChange={(e) => setRangeEnd(e.target.value)}
-                      className="rounded-lg border border-[var(--border)] px-2 py-1 text-xs text-[var(--foreground)] focus:border-[var(--accent)] focus:outline-none"
-                    />
-                  </div>
                   <button
                     type="button"
-                    onClick={addDateRangeRows}
+                    onClick={() => setShowDateRangeDialog(true)}
                     className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-3 py-2 text-xs font-semibold text-white shadow-[0_10px_24px_rgba(47,109,246,0.2)] transition hover:scale-[1.01]"
                   >
                     + Add date range
@@ -1761,8 +2331,22 @@ export function TimesheetUpload() {
                   >
                     + Single row
                   </button>
+                  <button
+                    type="button"
+                    onClick={toggleSelectAllPreviewRows}
+                    className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-white px-3 py-2 text-xs font-semibold text-[var(--foreground)]"
+                  >
+                    {allPreviewSelected ? "Clear all" : "Select all"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={deleteSelectedRows}
+                    disabled={!previewSelection.length}
+                    className="inline-flex items-center gap-2 rounded-full border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Delete selected
+                  </button>
                 </div>
-                {entryMode === "upload" ? null : null}
               </div>
             </div>
 
@@ -1952,6 +2536,9 @@ export function TimesheetUpload() {
                 <thead className="bg-[var(--surface)] text-[var(--muted)]">
                   <tr>
                     <th className="px-4 py-3 text-left text-[0.7rem] font-semibold uppercase tracking-[0.24em]">
+                      Select
+                    </th>
+                    <th className="px-4 py-3 text-left text-[0.7rem] font-semibold uppercase tracking-[0.24em]">
                       Name
                     </th>
                     <th className="px-4 py-3 text-left text-[0.7rem] font-semibold uppercase tracking-[0.24em]">
@@ -1981,7 +2568,7 @@ export function TimesheetUpload() {
                   {previewRows.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={9}
+                        colSpan={10}
                         className="px-4 py-6 text-center text-[var(--muted)]"
                       >
                         No rows yet. Click “+ Add row” or upload a timesheet to
@@ -1993,13 +2580,15 @@ export function TimesheetUpload() {
                       const isManual = (row as ManualRow).id !== undefined;
                       const baseKey = isManual
                         ? (row as ManualRow).id
-                        : `upload-${idx}`;
+                        : getUploadRowKey(row as ParsedTimesheetRow, idx);
                       const attendanceStatus =
                         (row as ParsedTimesheetRow).attendanceStatus ??
                         (row as ManualRow).attendanceStatus ??
                         "full_day";
                       const isAbsent = attendanceStatus === "absent";
-                      const isEdited = row.isSoftDeleted; // Use for status display
+                      const isPayrollLocked = Boolean(
+                        (row as ParsedTimesheetRow).isPayrollLocked,
+                      );
 
                       const getStatusColor = (status: string) => {
                         switch (status) {
@@ -2011,19 +2600,6 @@ export function TimesheetUpload() {
                             return "bg-red-100 text-red-700";
                           default:
                             return "bg-gray-100 text-gray-700";
-                        }
-                      };
-
-                      const getStatusLabel = (status: string) => {
-                        switch (status) {
-                          case "full_day":
-                            return "Full";
-                          case "half_day":
-                            return "Half";
-                          case "absent":
-                            return "Absent";
-                          default:
-                            return "Unknown";
                         }
                       };
                       const name =
@@ -2061,6 +2637,7 @@ export function TimesheetUpload() {
                           | "timeOut",
                         value: string,
                       ) => {
+                        if (isPayrollLocked) return;
                         if (
                           isAbsent &&
                           (field === "timeIn" ||
@@ -2112,15 +2689,10 @@ export function TimesheetUpload() {
                       };
 
                       const removeRow = () => {
-                        const proceed =
-                          typeof window === "undefined"
-                            ? true
-                            : window.confirm(
-                                `Delete this row${name ? ` for ${name}` : ""}${date ? ` on ${date}` : ""}? This cannot be undone.`,
-                              );
-                        if (!proceed) return;
+                        if (isPayrollLocked) return;
                         if (entryMode === "manual") {
                           handleManualDelete(baseKey);
+                          setManualMessage("Row deleted.");
                         } else {
                           setResult((prev) => {
                             if (!prev) return prev;
@@ -2131,10 +2703,12 @@ export function TimesheetUpload() {
                             setError(null);
                             return { ...prev, rows: nextRows };
                           });
+                          setUploadMessage("Row deleted.");
                         }
                       };
 
                       const toggleSoftDelete = () => {
+                        if (isPayrollLocked) return;
                         if (entryMode === "manual") {
                           handleManualSoftDelete(baseKey);
                         } else {
@@ -2167,8 +2741,19 @@ export function TimesheetUpload() {
                               ? `preview-row-${baseKey}`
                               : `preview-row-upload-${idx}`
                           }
-                          className={`hover:bg-[var(--surface)]/60 ${row.isSoftDeleted ? "opacity-60" : ""}`}
+                          className={`hover:bg-[var(--surface)]/60 ${row.isSoftDeleted ? "opacity-60" : ""} ${isPayrollLocked ? "bg-slate-100 text-slate-500" : ""}`}
                         >
+                          <td className="px-4 py-3">
+                            <input
+                              type="checkbox"
+                              checked={previewSelection.includes(String(baseKey))}
+                              onChange={() =>
+                                togglePreviewRowSelection(String(baseKey), isPayrollLocked)
+                              }
+                              className="h-4 w-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
+                              disabled={isPayrollLocked}
+                            />
+                          </td>
                           <td className="px-4 py-3">
                             <input
                               value={
@@ -2180,7 +2765,7 @@ export function TimesheetUpload() {
                                 updateRow("employeeName", e.target.value)
                               }
                               className={`w-full rounded-lg border px-3 py-2 text-sm shadow-[0_1px_0_rgba(16,40,94,0.04)] ${invalidFields[baseKey]?.includes("employeeName") ? "border-red-400 bg-red-50" : "border-[var(--border)] bg-white"}`}
-                              disabled={entryMode === "manual"}
+                              disabled={entryMode === "manual" || isPayrollLocked}
                             />
                           </td>
                           <td className="px-4 py-3">
@@ -2190,6 +2775,7 @@ export function TimesheetUpload() {
                               onChange={(e) =>
                                 updateRow("date", e.target.value)
                               }
+                              disabled={isPayrollLocked}
                               className={`w-full rounded-lg border px-3 py-2 text-sm shadow-[0_1px_0_rgba(16,40,94,0.04)] ${invalidFields[baseKey]?.includes("date") ? "border-red-400 bg-red-50" : "border-[var(--border)] bg-white"}`}
                             />
                           </td>
@@ -2202,7 +2788,7 @@ export function TimesheetUpload() {
                               }
                               placeholder="09:00"
                               className={`w-full rounded-lg border px-3 py-2 text-sm shadow-[0_1px_0_rgba(16,40,94,0.04)] ${invalidFields[baseKey]?.includes("timeIn") ? "border-red-400 bg-red-50" : "border-[var(--border)] bg-white"}`}
-                              disabled={isAbsent}
+                              disabled={isAbsent || isPayrollLocked}
                             />
                           </td>
                           <td className="px-4 py-3">
@@ -2214,7 +2800,7 @@ export function TimesheetUpload() {
                               }
                               placeholder="18:00"
                               className={`w-full rounded-lg border px-3 py-2 text-sm shadow-[0_1px_0_rgba(16,40,94,0.04)] ${invalidFields[baseKey]?.includes("timeOut") ? "border-red-400 bg-red-50" : "border-[var(--border)] bg-white"}`}
-                              disabled={isAbsent}
+                              disabled={isAbsent || isPayrollLocked}
                             />
                           </td>
                           <td className="px-4 py-3">
@@ -2226,7 +2812,7 @@ export function TimesheetUpload() {
                               }
                               step="0.01"
                               className={`w-full rounded-lg border px-3 py-2 text-sm shadow-[0_1px_0_rgba(16,40,94,0.04)] ${invalidFields[baseKey]?.includes("totalHours") ? "border-red-400 bg-red-50" : "border-[var(--border)] bg-white"}`}
-                              disabled={isAbsent}
+                              disabled={isAbsent || isPayrollLocked}
                             />
                           </td>
                           <td className="px-4 py-3">
@@ -2241,7 +2827,7 @@ export function TimesheetUpload() {
                                 updateRow("dept", e.target.value)
                               }
                               className={`w-full rounded-lg border px-3 py-2 text-sm shadow-[0_1px_0_rgba(16,40,94,0.04)] ${invalidFields[baseKey]?.includes("dept") ? "border-red-400 bg-red-50" : "border-[var(--border)] bg-white"}`}
-                              disabled={entryMode === "manual"}
+                              disabled={entryMode === "manual" || isPayrollLocked}
                             />
                           </td>
                           <td className="px-4 py-3">
@@ -2250,6 +2836,7 @@ export function TimesheetUpload() {
                                 row.isSoftDeleted ? "deleted" : attendanceStatus
                               }
                               onChange={(e) => {
+                                if (isPayrollLocked) return;
                                 const newStatus = e.target.value;
                                 if (newStatus === "deleted") {
                                   toggleSoftDelete();
@@ -2313,6 +2900,7 @@ export function TimesheetUpload() {
                                 }
                               }}
                               className={`rounded-lg border px-2 py-1 text-xs font-semibold ${row.isSoftDeleted ? "border-red-200 bg-red-50 text-red-700" : getStatusColor(attendanceStatus)}`}
+                              disabled={isPayrollLocked}
                             >
                               <option value="full_day">Full Day</option>
                               <option value="half_day">Half Day</option>
@@ -2323,13 +2911,21 @@ export function TimesheetUpload() {
                             </select>
                           </td>
                           <td className="px-4 py-3 text-right">
-                            <button
-                              type="button"
-                              onClick={removeRow}
-                              className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-3 py-1 text-xs font-semibold text-red-700 transition hover:border-red-300 hover:bg-red-100"
-                            >
-                              Delete
-                            </button>
+                            <div className="flex items-center justify-end gap-2">
+                              {isPayrollLocked ? (
+                                <span className="rounded-full border border-slate-300 bg-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-600">
+                                  Payroll locked
+                                </span>
+                              ) : null}
+                              <button
+                                type="button"
+                                onClick={removeRow}
+                                disabled={isPayrollLocked}
+                                className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-3 py-1 text-xs font-semibold text-red-700 transition hover:border-red-300 hover:bg-red-100 disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-200 disabled:text-slate-500"
+                              >
+                                Delete
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -2360,119 +2956,7 @@ export function TimesheetUpload() {
                   <>
                     <button
                       type="button"
-                      onClick={async () => {
-                        if (!result) return;
-                        setPreviewError(null);
-                        setInvalidFields({});
-                        const activeRows = result.rows.filter(
-                          (row) => !row.isSoftDeleted,
-                        );
-                        const invalid = activeRows.filter((row) => {
-                          const status = row.attendanceStatus ?? "full_day";
-                          const requiresTime = status !== "absent";
-                          const missingBase =
-                            !row.employeeName?.trim() || !row.date || !row.dept;
-                          const missingTime =
-                            requiresTime &&
-                            (!row.timeIn ||
-                              !row.timeOut ||
-                              row.totalHours === null ||
-                              row.totalHours === undefined);
-                          return missingBase || missingTime;
-                        });
-                        if (invalid.length) {
-                          setPreviewError(
-                            "Add employee, date, time in/out, hours, and department for every row before saving.",
-                          );
-                          const invalidMap: Record<string, string[]> = {};
-                          invalid.forEach((row) => {
-                            const idxRow = result.rows.indexOf(row);
-                            const key = `upload-${idxRow}`;
-                            invalidMap[key] = [
-                              ...(row.employeeName?.trim()
-                                ? []
-                                : ["employeeName"]),
-                              ...(row.date ? [] : ["date"]),
-                              ...(row.dept ? [] : ["dept"]),
-                              ...((row.attendanceStatus ?? "full_day") !==
-                                "absent" && !row.timeIn
-                                ? ["timeIn"]
-                                : []),
-                              ...((row.attendanceStatus ?? "full_day") !==
-                                "absent" && !row.timeOut
-                                ? ["timeOut"]
-                                : []),
-                              ...((row.attendanceStatus ?? "full_day") !==
-                                "absent" &&
-                              (row.totalHours === null ||
-                                row.totalHours === undefined)
-                                ? ["totalHours"]
-                                : []),
-                            ];
-                          });
-                          setInvalidFields(invalidMap);
-                          const idx = result.rows.findIndex(
-                            (row) =>
-                              !row.employeeName?.trim() ||
-                              !row.date ||
-                              !row.dept ||
-                              ((row.attendanceStatus ?? "full_day") !==
-                                "absent" &&
-                                (row.totalHours === null ||
-                                  row.totalHours === undefined ||
-                                  !row.timeIn ||
-                                  !row.timeOut)),
-                          );
-                          if (idx >= 0) {
-                            scrollToRow(`preview-row-upload-${idx}`);
-                          }
-                          return;
-                        }
-
-                        const negativeHours = activeRows.filter(
-                          (row) =>
-                            row.totalHours !== null &&
-                            row.totalHours !== undefined &&
-                            Number(row.totalHours) < 0,
-                        );
-
-                        if (negativeHours.length) {
-                          setPreviewError("Hours cannot be negative.");
-                          const invalidMap: Record<string, string[]> = {};
-                          negativeHours.forEach((row) => {
-                            const idxRow = result.rows.indexOf(row);
-                            invalidMap[`upload-${idxRow}`] = ["totalHours"];
-                          });
-                          setInvalidFields(invalidMap);
-                          const first = result.rows.indexOf(negativeHours[0]);
-                          if (first >= 0) {
-                            scrollToRow(`preview-row-upload-${first}`);
-                          }
-                          return;
-                        }
-
-                        const dupCheck = flagUploadDuplicates(result.rows);
-                        if (dupCheck.hasDuplicates) {
-                          setPreviewError(
-                            "Each employee can only have one row per date. Fix duplicates before saving.",
-                          );
-                          if (dupCheck.invalidMap)
-                            setInvalidFields(dupCheck.invalidMap);
-                          if (dupCheck.firstIndex !== undefined)
-                            scrollToRow(
-                              `preview-row-upload-${dupCheck.firstIndex}`,
-                            );
-                          return;
-                        }
-
-                        setInvalidFields({});
-                        const ok = activeTimesheetId
-                          ? await updateTimesheetRows(result.rows)
-                          : await saveUploadRows(result.rows);
-                        if (ok) {
-                          setUploadMessage("Upload rows saved.");
-                        }
-                      }}
+                      onClick={() => openSaveConfirmation("upload")}
                       className="rounded-full bg-[var(--accent)] px-4 py-2 text-xs font-semibold text-white shadow-[0_10px_24px_rgba(47,109,246,0.2)] hover:scale-[1.01]"
                     >
                       Save
@@ -2504,6 +2988,238 @@ export function TimesheetUpload() {
           </div>
         </section>
       )}
+
+      {showAddEmployeeDialog ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4">
+          <div className="w-full max-w-lg rounded-3xl border border-[var(--border)] bg-[var(--panel)] p-6 shadow-[0_24px_70px_rgba(16,40,94,0.2)]">
+            <div className="space-y-1">
+              <p className="text-xs uppercase tracking-[0.26em] text-[var(--muted)]">
+                Add employee
+              </p>
+              <h3 className="text-xl font-semibold text-[var(--foreground)]">
+                Create employee starter rows
+              </h3>
+            </div>
+            <div className="mt-5 space-y-4">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-semibold text-[var(--muted)]">
+                  Employee name
+                </label>
+                <input
+                  value={addEmployeeName}
+                  onChange={(e) => setAddEmployeeName(e.target.value)}
+                  className="w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
+                />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAddEmployeeSeedMode("single")}
+                  className={`rounded-full px-3 py-2 text-xs font-semibold ${addEmployeeSeedMode === "single" ? "bg-[var(--accent)] text-white" : "border border-[var(--border)] bg-white text-[var(--foreground)]"}`}
+                >
+                  Single day
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAddEmployeeSeedMode("range")}
+                  className={`rounded-full px-3 py-2 text-xs font-semibold ${addEmployeeSeedMode === "range" ? "bg-[var(--accent)] text-white" : "border border-[var(--border)] bg-white text-[var(--foreground)]"}`}
+                >
+                  Date range
+                </button>
+              </div>
+              {addEmployeeSeedMode === "single" ? (
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-semibold text-[var(--muted)]">
+                    Date
+                  </label>
+                  <input
+                    type="date"
+                    value={addEmployeeSingleDate}
+                    onChange={(e) => setAddEmployeeSingleDate(e.target.value)}
+                    className="w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
+                  />
+                </div>
+              ) : (
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs font-semibold text-[var(--muted)]">
+                      Start date
+                    </label>
+                    <input
+                      type="date"
+                      value={rangeStart}
+                      onChange={(e) => setRangeStart(e.target.value)}
+                      className="w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs font-semibold text-[var(--muted)]">
+                      End date
+                    </label>
+                    <input
+                      type="date"
+                      value={rangeEnd}
+                      onChange={(e) => setRangeEnd(e.target.value)}
+                      className="w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="mt-6 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShowAddEmployeeDialog(false)}
+                className="rounded-xl border border-[var(--border)] bg-white px-4 py-2 text-sm font-semibold text-[var(--foreground)]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={submitAddEmployeeDialog}
+                className="rounded-xl bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
+              >
+                Add employee
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showDateRangeDialog ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4">
+          <div className="w-full max-w-lg rounded-3xl border border-[var(--border)] bg-[var(--panel)] p-6 shadow-[0_24px_70px_rgba(16,40,94,0.2)]">
+            <div className="space-y-1">
+              <p className="text-xs uppercase tracking-[0.26em] text-[var(--muted)]">
+                Add date range
+              </p>
+              <h3 className="text-xl font-semibold text-[var(--foreground)]">
+                Seed rows into the preview
+              </h3>
+            </div>
+            <div className="mt-5 grid gap-3 md:grid-cols-2">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-semibold text-[var(--muted)]">
+                  Start date
+                </label>
+                <input
+                  type="date"
+                  value={rangeStart}
+                  onChange={(e) => setRangeStart(e.target.value)}
+                  className="w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-semibold text-[var(--muted)]">
+                  End date
+                </label>
+                <input
+                  type="date"
+                  value={rangeEnd}
+                  onChange={(e) => setRangeEnd(e.target.value)}
+                  className="w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
+                />
+              </div>
+            </div>
+            <div className="mt-6 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShowDateRangeDialog(false)}
+                className="rounded-xl border border-[var(--border)] bg-white px-4 py-2 text-sm font-semibold text-[var(--foreground)]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={addDateRangeRows}
+                className="rounded-xl bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
+              >
+                Add dates
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {saveConfirmState.open ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 px-4">
+          <div className="w-full max-w-md rounded-3xl border border-[var(--border)] bg-[var(--panel)] p-6 shadow-[0_24px_70px_rgba(16,40,94,0.2)]">
+            <div className="space-y-1">
+              <p className="text-xs uppercase tracking-[0.26em] text-[var(--muted)]">
+                Confirm save
+              </p>
+              <h3 className="text-xl font-semibold text-[var(--foreground)]">
+                Review changes before saving
+              </h3>
+            </div>
+            <div className="mt-5 grid gap-3 sm:grid-cols-3">
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-center">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">
+                  Added
+                </p>
+                <p className="mt-1 text-2xl font-semibold text-emerald-800">
+                  {saveConfirmState.summary.added}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-center">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-700">
+                  Edited
+                </p>
+                <p className="mt-1 text-2xl font-semibold text-amber-800">
+                  {saveConfirmState.summary.edited}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-center">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-red-700">
+                  Deleted
+                </p>
+                <p className="mt-1 text-2xl font-semibold text-red-800">
+                  {saveConfirmState.summary.deleted}
+                </p>
+              </div>
+            </div>
+            <p className="mt-4 text-sm text-[var(--muted)]">
+              Validation will run after you confirm, and database save behavior stays the same.
+            </p>
+            <div className="mt-6 flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={restoreDeletedRows}
+                disabled={saveConfirmState.summary.deleted === 0}
+                className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Restore deleted rows
+              </button>
+              <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={closeSaveConfirmation}
+                className="rounded-xl border border-[var(--border)] bg-white px-4 py-2 text-sm font-semibold text-[var(--foreground)]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const mode = saveConfirmState.mode;
+                  closeSaveConfirmation();
+                  if (mode === "manual") {
+                    await executeManualSave();
+                    return;
+                  }
+                  if (mode === "upload") {
+                    await executeUploadSave();
+                  }
+                }}
+                className="rounded-xl bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white"
+              >
+                Confirm save
+              </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import type { AttendanceStatus, ParsedTimesheetRow } from "@/lib/types";
 
 type RowForMap = {
+  id: number;
   employeeName: string;
   date: Date;
   beforeNoonIn: string | null;
@@ -13,10 +14,12 @@ type RowForMap = {
   userId: string | null;
   employeeId: number | null;
   attendanceStatus: string;
+  payrollEntries: { id: number }[];
 };
 
 function mapRow(row: RowForMap): ParsedTimesheetRow {
   return {
+    id: row.id,
     employeeName: row.employeeName,
     date: row.date instanceof Date ? row.date.toISOString().slice(0, 10) : String(row.date),
     timeIn: row.beforeNoonIn ?? null,
@@ -28,6 +31,7 @@ function mapRow(row: RowForMap): ParsedTimesheetRow {
     userId: row.userId ?? null,
     employeeId: row.employeeId ?? undefined,
     attendanceStatus: (row.attendanceStatus as AttendanceStatus) ?? "full_day",
+    isPayrollLocked: row.payrollEntries.length > 0,
   };
 }
 
@@ -77,6 +81,12 @@ export async function GET(request: Request) {
         rows: {
           where: whereClause,
           orderBy: { date: "asc" },
+          include: {
+            payrollEntries: {
+              select: { id: true },
+              take: 1,
+            },
+          },
         },
       },
     });
