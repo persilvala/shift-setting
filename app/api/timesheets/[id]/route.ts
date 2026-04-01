@@ -22,6 +22,12 @@ export async function GET(
       include: {
         rows: {
           orderBy: [{ date: "asc" }, { employeeName: "asc" }],
+          include: {
+            payrollEntries: {
+              select: { id: true },
+              take: 1,
+            },
+          },
         },
       },
     });
@@ -42,6 +48,7 @@ export async function GET(
         ...row,
         date: row.date.toISOString(),
         createdAt: row.createdAt.toISOString(),
+        isPayrollLocked: row.payrollEntries.length > 0,
       })),
     };
 

@@ -175,7 +175,7 @@ const snapshotToManualRow = (snapshot: RowSnapshot): ManualRow => ({
 });
 
 const snapshotToUploadRow = (snapshot: RowSnapshot): ParsedTimesheetRow =>
-  ensureUploadRowKey({
+  ({
     id: snapshot.dbId ?? undefined,
     employeeName: snapshot.employeeName,
     employeeId: snapshot.employeeId ?? undefined,
@@ -188,6 +188,7 @@ const snapshotToUploadRow = (snapshot: RowSnapshot): ParsedTimesheetRow =>
     isSoftDeleted: false,
     issues: [],
     sourceLine: 0,
+    __rowKey: snapshot.key,
   } as ParsedTimesheetRow);
 
 const snapshotsEqual = (a: RowSnapshot, b: RowSnapshot) =>
@@ -271,6 +272,7 @@ const mapParsedToManualRow = (
   timeIn: row.timeIn ?? null,
   timeOut: row.timeOut ?? null,
   isSoftDeleted: row.isSoftDeleted ?? false,
+  isPayrollLocked: row.isPayrollLocked ?? false,
   attendanceStatus: row.attendanceStatus ?? "full_day",
 });
 
@@ -1752,14 +1754,20 @@ export function TimesheetUpload() {
 
   const restoreDeletedRows = () => {
     if (saveConfirmState.mode === "manual") {
-      const currentKeys = new Set(manualRows.map((row) => row.id));
+      const currentKeys = new Set(manualRows.map((row) => String(row.id)));
       const restoredRows = manualBaselineRows
         .filter((row) => !row.isSoftDeleted && !currentKeys.has(row.key))
         .map(snapshotToManualRow);
 
       if (!restoredRows.length) return;
 
-      const nextRows = [...restoredRows, ...manualRows];
+      const dedupedRestoredRows = restoredRows.filter(
+        (row) => !currentKeys.has(String(row.id)),
+      );
+
+      if (!dedupedRestoredRows.length) return;
+
+      const nextRows = [...dedupedRestoredRows, ...manualRows];
       setManualRows(nextRows);
       setSaveConfirmState({
         open: true,
@@ -1770,7 +1778,7 @@ export function TimesheetUpload() {
         ),
       });
       setManualMessage(
-        `Restored ${restoredRows.length} deleted row${restoredRows.length === 1 ? "" : "s"}.`,
+        `Restored ${dedupedRestoredRows.length} deleted row${dedupedRestoredRows.length === 1 ? "" : "s"}.`,
       );
       return;
     }
@@ -1786,7 +1794,13 @@ export function TimesheetUpload() {
 
       if (!restoredRows.length) return;
 
-      const nextRows = ensureUploadRowKeys([...restoredRows, ...currentRows]);
+      const dedupedRestoredRows = restoredRows.filter(
+        (row, index) => !currentKeys.has(getUploadRowKey(row, index)),
+      );
+
+      if (!dedupedRestoredRows.length) return;
+
+      const nextRows = ensureUploadRowKeys([...dedupedRestoredRows, ...currentRows]);
       setResult((prev) => (prev ? { ...prev, rows: nextRows } : prev));
       setSaveConfirmState({
         open: true,
@@ -1797,7 +1811,7 @@ export function TimesheetUpload() {
         ),
       });
       setUploadMessage(
-        `Restored ${restoredRows.length} deleted row${restoredRows.length === 1 ? "" : "s"}.`,
+        `Restored ${dedupedRestoredRows.length} deleted row${dedupedRestoredRows.length === 1 ? "" : "s"}.`,
       );
     }
   };
