@@ -1,4 +1,5 @@
 import { defineConfig, globalIgnores } from "eslint/config";
+import nextPlugin from "@next/eslint-plugin-next";
 import tseslint from "typescript-eslint";
 
 const eslintConfig = defineConfig([
@@ -9,6 +10,8 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     "**/node_modules/**",
   ]),
+
+  nextPlugin.flatConfig.coreWebVitals,
 
   ...tseslint.configs.recommended,
 

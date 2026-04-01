@@ -2,8 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
-import type { ParsedTimesheetRow, TimesheetMeta } from "@/lib/types";
+import type { ParsedTimesheetRow } from "@/lib/types";
 import { PageHeader } from "@/components/PageHeader";
 import {
   parseExcelFileClient,
@@ -11,22 +10,12 @@ import {
   type ClientParseResult,
 } from "@/lib/clientParser";
 
-type UploadSuccess = {
-  ok: true;
-  format: "excel" | "pdf" | "manual";
-  rows: ParsedTimesheetRow[];
-  warnings: string[];
-  startDate?: string | null;
-  endDate?: string | null;
-  timesheetId?: string;
-};
-
 type UploadError = { ok: false; error: string };
 
 const PREVIEW_LIMIT = 50;
 
 type ManualRow = {
-  id: string;
+  id: string | number;
   employeeName: string;
   employeeId?: number | null;
   date: string;
@@ -35,6 +24,7 @@ type ManualRow = {
   timeIn?: string | null;
   timeOut?: string | null;
   isSoftDeleted?: boolean;
+  isPayrollLocked?: boolean;
   attendanceStatus?: "full_day" | "half_day" | "absent";
 };
 
@@ -48,18 +38,6 @@ type TimesheetPayload = {
   timesheetId?: number | null;
   fileName?: string | null;
   mergedFromDatabaseCount?: number;
-};
-
-type TimesheetLoadResponse = {
-  ok: boolean;
-  rows?: ParsedTimesheetRow[];
-  timesheet?: {
-    startDate: string;
-    endDate: string;
-    uploadedAt: string;
-    id: string;
-    format?: string;
-  } | null;
 };
 
 type TimesheetHistoryItem = {
@@ -297,7 +275,6 @@ const mapParsedToManualRow = (
 });
 
 export function TimesheetUpload() {
-  const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
   const [result, setResult] = useState<TimesheetPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -306,13 +283,8 @@ export function TimesheetUpload() {
   const [endDate, setEndDate] = useState<string | null>(null);
   const [entryMode, setEntryMode] = useState<"upload" | "manual">("upload");
   const [manualRows, setManualRows] = useState<ManualRow[]>([]);
-  const [manualEmployee, setManualEmployee] = useState("");
-  const [manualDate, setManualDate] = useState("");
-  const [manualHours, setManualHours] = useState("");
-  const [manualDept, setManualDept] = useState("");
   const [rangeStart, setRangeStart] = useState("");
   const [rangeEnd, setRangeEnd] = useState("");
-  const [manualEditingId, setManualEditingId] = useState<string | null>(null);
   const [manualMessage, setManualMessage] = useState<string | null>(null);
   const [uploadMessage, setUploadMessage] = useState<string | null>(null);
   const [currentEmployee, setCurrentEmployee] = useState<string>("");
@@ -934,55 +906,6 @@ export function TimesheetUpload() {
     );
   }, [result?.rows]);
 
-  const handleGeneratePayroll = async () => {
-    if (entryMode === "manual") {
-      const ok = await persistManualRows(manualRows);
-      if (!ok) return;
-      const activeRows = manualRows.filter((row) => !row.isSoftDeleted);
-      const payloadRows: ParsedTimesheetRow[] = activeRows.map((row, idx) => {
-        const status = row.attendanceStatus ?? "full_day";
-        return {
-          employeeName: row.employeeName,
-          dept: row.dept ?? null,
-          date: row.date,
-          timeIn: status === "absent" ? null : (row.timeIn ?? null),
-          timeOut: status === "absent" ? null : (row.timeOut ?? null),
-          totalHours: status === "absent" ? null : row.totalHours,
-          attendanceStatus: status,
-          issues: [],
-          sourceLine: idx + 1,
-        };
-      });
-      sessionStorage.setItem("timesheetData", JSON.stringify(payloadRows));
-      sessionStorage.setItem(
-        "timesheetMeta",
-        JSON.stringify({} satisfies TimesheetMeta),
-      );
-      router.push("/admin/payroll");
-      return;
-    }
-
-    if (!result?.rows.length) {
-      setError("Upload and parse a timesheet first.");
-      return;
-    }
-    if (activeTimesheetId) {
-      const ok = await updateTimesheetRows(result.rows);
-      if (!ok) return;
-    }
-    sessionStorage.setItem("timesheetData", JSON.stringify(result.rows));
-    sessionStorage.setItem(
-      "timesheetMeta",
-      JSON.stringify({
-        format: result.format === "manual" ? undefined : result.format,
-        timesheetId: result.timesheetId,
-        startDate: result.startDate,
-        endDate: result.endDate,
-      } satisfies TimesheetMeta),
-    );
-    router.push("/admin/payroll");
-  };
-
   const persistManualRows = async (
     rows: ManualRow[],
     deletedRows: DeletedRowPayload[] = [],
@@ -1265,69 +1188,13 @@ export function TimesheetUpload() {
     }
   };
 
-  const resetManualForm = () => {
-    setManualEmployee("");
-    setManualDate("");
-    setManualHours("");
-    setManualDept("");
-    setManualEditingId(null);
-  };
-
-  const handleManualUpsert = () => {
-    setManualMessage(null);
-    if (!manualEmployee.trim() || !manualDate.trim()) {
-      setError("Employee name and date are required.");
-      return;
-    }
-
-    const parsedHours = Number(manualHours);
-    if (Number.isNaN(parsedHours) || parsedHours < 0) {
-      setError("Hours worked must be zero or greater.");
-      return;
-    }
-
-    const next: ManualRow = {
-      id:
-        manualEditingId ??
-        `manual-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      employeeName: manualEmployee.trim(),
-      date: manualDate,
-      totalHours: parsedHours,
-      dept: manualDept.trim() || null,
-      isSoftDeleted: false,
-    };
-
-    setManualRows((rows) => {
-      const exists = rows.some((row) => row.id === next.id);
-      return exists
-        ? rows.map((row) => (row.id === next.id ? { ...row, ...next } : row))
-        : [...rows, next];
-    });
-    setError(null);
-    setManualMessage(
-      manualEditingId ? "Manual row updated." : "Manual row added.",
-    );
-    resetManualForm();
-  };
-
-  const handleManualEdit = (row: ManualRow) => {
-    setEntryMode("manual");
-    setManualEmployee(row.employeeName);
-    setCurrentEmployee(row.employeeName);
-    setManualDate(row.date);
-    setManualHours(String(row.totalHours));
-    setManualDept(row.dept ?? "");
-    setManualEditingId(row.id);
-    setManualMessage(null);
-  };
-
-  const handleManualDelete = (id: string) => {
+  const handleManualDelete = (id: string | number) => {
     setManualRows((rows) => {
       return rows.filter((row) => row.id !== id);
     });
   };
 
-  const handleManualSoftDelete = (id: string) => {
+  const handleManualSoftDelete = (id: string | number) => {
     setManualRows((rows) => {
       return rows.map((row) =>
         row.id === id ? { ...row, isSoftDeleted: !row.isSoftDeleted } : row,
@@ -1676,7 +1543,6 @@ export function TimesheetUpload() {
     setEndDate(null);
     setManualRows([]);
     setCurrentEmployee(trimmed);
-    setManualEmployee(trimmed);
     setBulkName(trimmed);
     setEntryMode("manual");
     const found = employees.find(
@@ -1848,7 +1714,6 @@ export function TimesheetUpload() {
     setManualRows(seededRows);
     setManualBaselineRows([]);
     setCurrentEmployee(trimmedName);
-    setManualEmployee(trimmedName);
     setBulkName(trimmedName);
     setBulkDept("");
     setEntryMode("manual");
@@ -2174,7 +2039,6 @@ export function TimesheetUpload() {
                     { id: 0, employeeName: label, dayCount: 0 },
                   ]);
                   setCurrentEmployee(label);
-                  setManualEmployee(label);
                   setBulkName(label);
                   setBulkDept("");
                   setNewEmployeeCounter((c) => c + 1);
@@ -2449,9 +2313,8 @@ export function TimesheetUpload() {
                             : r,
                         ),
                       );
-                      setCurrentEmployee(bulkName.trim());
-                      setManualEmployee(bulkName.trim());
-                    }}
+                       setCurrentEmployee(bulkName.trim());
+                     }}
                     placeholder="Employee name"
                     className="w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
                   />

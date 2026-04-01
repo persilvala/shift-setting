@@ -41,8 +41,6 @@ export function Pagination({ page, totalPages, onChange, className }: Pagination
 
   const ghostBtn = `${baseBtn} border-[var(--border)] bg-white text-[var(--foreground)] hover:border-[var(--accent)]/70 hover:text-[var(--foreground)]`;
   const solidBtn = `${baseBtn} border-[var(--accent)] bg-[var(--accent)] text-white shadow-[0_10px_24px_rgba(47,109,246,0.18)] hover:brightness-[1.05]`;
-  const mutedBtn = `${baseBtn} border-[var(--border)] bg-[var(--surface)] text-[var(--muted)]`;
-
   return (
     <div className={`flex flex-wrap items-center gap-2 ${className ?? ""}`}>
       <button

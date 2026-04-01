@@ -418,7 +418,7 @@ export async function upsertManualTimesheet(options: {
             attendanceStatus: status,
           } as any,
         });
-        upserted.push(updated);
+        upserted.push({ ...updated, payrollEntries: [] } as any);
       } else {
         const created = await tx.timesheetRow.create({
           data: {
@@ -434,7 +434,7 @@ export async function upsertManualTimesheet(options: {
             attendanceStatus: status,
           } as any,
         });
-        upserted.push(created);
+        upserted.push({ ...created, payrollEntries: [] } as any);
       }
     }
 

@@ -36,7 +36,7 @@ type PayrollEntryResult = {
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as GeneratePayrollRequest;
-    const { startDate, endDate, basePayPerDay, attendanceData } = body;
+    const { basePayPerDay, attendanceData } = body;
 
     const byEmployeeDate = new Map<string, {
       employeeId: string;

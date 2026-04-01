@@ -4,10 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import { TopNav } from "@/components/layout/TopNav";
 import { PageHeader } from "@/components/PageHeader";
 import type { ParsedTimesheetRow, DashboardRow, FilterState } from "@/lib/types";
-import { UploadTimesheet } from "@/components/UploadTimesheet";
-import { AttendanceSummaryTable } from "@/components/AttendanceSummaryTable";
-import type { AttendanceSummary } from "@/lib/attendanceCalculator";
-import { Pagination } from "@/components/Pagination";
 
 const initialFilters: FilterState = {
   employee: "",
@@ -67,13 +63,8 @@ export default function DashboardPage() {
   const [rows, setRows] = useState<ParsedTimesheetRow[]>([]);
   const [dbRows, setDbRows] = useState<DashboardRow[]>([]);
   const [filters, setFilters] = useState<FilterState>(initialFilters);
-  const [loading, setLoading] = useState(true);
-  const [dataSource, setDataSource] = useState<"database" | "session">("session");
   const [refreshing, setRefreshing] = useState(false);
   const [payrollSummary, setPayrollSummary] = useState<PayrollDashboardSummary | null>(null);
-  const [attendanceSummary, setAttendanceSummary] = useState<AttendanceSummary[]>([]);
-  const [page, setPage] = useState(1);
-  const PAGE_SIZE = 10;
 
   const refreshData = async () => {
     setRefreshing(true);
@@ -92,7 +83,6 @@ export default function DashboardPage() {
 
         const combinedRows = allTimesheets.flatMap((ts: { rows: DashboardRow[] }) => ts.rows);
         setDbRows(combinedRows);
-        setDataSource("database");
         console.log('[Dashboard] Refreshed', combinedRows.length, 'total rows from all timesheets');
       }
     } catch (err) {
@@ -160,15 +150,11 @@ export default function DashboardPage() {
           console.log('[Dashboard] Combined', combinedRows.length, 'total rows from all timesheets');
 
           setDbRows(combinedRows);
-          setDataSource("database");
-          console.log('[Dashboard] dataSource set to: database');
         } else {
           console.log('[Dashboard] No timesheets found in database');
         }
       } catch (err) {
         console.error('[Dashboard] Failed to fetch from database:', err);
-      } finally {
-        setLoading(false);
       }
     };
 
@@ -206,10 +192,6 @@ export default function DashboardPage() {
     };
   }, []);
 
-  const handleUploadResults = (rows: AttendanceSummary[]) => {
-    setAttendanceSummary(rows);
-  };
-
   const activeRows: DashboardRow[] = dbRows.length > 0 ? dbRows : (rows as DashboardRow[]);
 
   const employees = useMemo(() => {
@@ -238,10 +220,6 @@ export default function DashboardPage() {
       return true;
     });
   }, [filters, activeRows]);
-
-  useEffect(() => {
-    setPage(1);
-  }, [filters, activeRows.length]);
 
   const aggregates = useMemo(() => {
     const byEmployee = new Map<
@@ -317,12 +295,6 @@ export default function DashboardPage() {
       attendance,
     };
   }, [filteredRows]);
-
-  const totalPages = Math.max(1, Math.ceil((aggregates.attendance?.length ?? 0) / PAGE_SIZE));
-  const pageSafe = Math.min(page, totalPages);
-  const paginatedAttendance = aggregates.attendance?.slice((pageSafe - 1) * PAGE_SIZE, pageSafe * PAGE_SIZE) ?? [];
-
-  const hasData = activeRows.length > 0;
 
   return (
     <div className="pt-20 pb-12 md:pb-10">
