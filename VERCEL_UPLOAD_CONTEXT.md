@@ -24,7 +24,7 @@ This indicates the API is returning an HTML error page instead of JSON.
 **Flow:**
 1. Standard Excel/CSV → Parsed in browser → Send JSON to API
 2. Shift code template (template.xlsx) → Detected → Fallback to FormData upload
-3. PDF → Always server-side via FormData
+3. PDF → Always server-side via FormData.
 
 ---
 
