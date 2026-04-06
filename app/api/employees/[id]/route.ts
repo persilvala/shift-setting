@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { logAuditEvent } from "@/actions/audit";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
@@ -46,12 +47,35 @@ export async function PUT(request: Request, { params }: RouteParams) {
     const body = await request.json();
     const { employeeName, basePayPerDay } = body;
 
+    const existing = await prisma.employee.findUnique({
+      where: { id: employeeId },
+    });
+    if (!existing) {
+      return NextResponse.json({ error: "Employee not found" }, { status: 404 });
+    }
+
     const employee = await prisma.employee.update({
       where: { id: employeeId },
       data: {
         employeeName: employeeName !== undefined ? employeeName : undefined,
         basePayPerDay: basePayPerDay !== undefined ? (basePayPerDay ? parseFloat(basePayPerDay) : undefined) : undefined,
       },
+    });
+
+    const changes: string[] = [];
+    if (employeeName !== undefined && employeeName !== existing.employeeName) {
+      changes.push(`name: "${existing.employeeName}" → "${employeeName}"`);
+    }
+    if (basePayPerDay !== undefined && parseFloat(basePayPerDay) !== existing.basePayPerDay) {
+      changes.push(`base pay: ${existing.basePayPerDay} → ${basePayPerDay}`);
+    }
+
+    await logAuditEvent({
+      action: "Employee Updated",
+      description: changes.length > 0
+        ? `Updated employee "${existing.employeeName}": ${changes.join(", ")}`
+        : `Updated employee "${existing.employeeName}"`,
+      status: "Success",
     });
 
     return NextResponse.json({ employee });
@@ -72,8 +96,24 @@ export async function DELETE(request: Request, { params }: RouteParams) {
     if (employeeId === null) {
       return NextResponse.json({ error: "Invalid employee id" }, { status: 400 });
     }
+
+    const employee = await prisma.employee.findUnique({
+      where: { id: employeeId },
+      select: { employeeName: true },
+    });
+
+    if (!employee) {
+      return NextResponse.json({ error: "Employee not found" }, { status: 404 });
+    }
+
     await prisma.employee.delete({
       where: { id: employeeId },
+    });
+
+    await logAuditEvent({
+      action: "Employee Deleted",
+      description: `Deleted employee "${employee.employeeName}"`,
+      status: "Success",
     });
 
     return NextResponse.json({ success: true });

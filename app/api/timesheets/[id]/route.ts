@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { logAuditEvent } from "@/actions/audit";
 import type { AttendanceStatus } from "@/lib/types";
 import {
   upsertManualTimesheet,
@@ -106,6 +107,18 @@ export async function PUT(
         { status: result.status ?? 400 },
       );
     }
+
+    const timesheet = await prisma.timesheet.findUnique({
+      where: { id: timesheetId },
+      select: { fileName: true, startDate: true, endDate: true },
+    });
+    await logAuditEvent({
+      action: "Timesheet Edited",
+      description: timesheet
+        ? `Edited timesheet "${timesheet.fileName}" (${timesheet.startDate.toISOString().slice(0, 10)} - ${timesheet.endDate.toISOString().slice(0, 10)})`
+        : `Edited timesheet ID: ${timesheetId}`,
+      status: "Success",
+    });
 
     return NextResponse.json({
       ok: true,

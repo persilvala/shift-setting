@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { logAuditEvent } from "@/actions/audit";
 import type { AttendanceStatus } from "@/lib/types";
 import {
   upsertManualTimesheet,
@@ -78,6 +79,20 @@ export async function POST(request: Request) {
         { ok: false, error: result.error },
         { status: result.status ?? 400 },
       );
+    }
+
+    if (result.timesheetId) {
+      const timesheet = await prisma.timesheet.findUnique({
+        where: { id: result.timesheetId },
+        select: { fileName: true, startDate: true, endDate: true },
+      });
+      await logAuditEvent({
+        action: "Timesheet Created",
+        description: timesheet
+          ? `Added new timesheet "${timesheet.fileName}" (${timesheet.startDate.toISOString().slice(0, 10)} - ${timesheet.endDate.toISOString().slice(0, 10)})`
+          : `Added new timesheet (ID: ${result.timesheetId})`,
+        status: "Success",
+      });
     }
 
     return NextResponse.json({

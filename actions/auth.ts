@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import { auth } from "@/auth";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
+import { logAuditEvent } from "@/actions/audit";
 
 const PASSWORD_MIN_LENGTH = 8;
 const PASSWORD_REQUIRE_UPPERCASE = /[A-Z]/;
@@ -82,6 +83,12 @@ export async function changePassword(
       },
     });
 
+    await logAuditEvent({
+      action: "Password Changed",
+      description: `Admin "${admin.username}" changed their password`,
+      status: "Success",
+    });
+
     revalidatePath("/admin/dashboard");
     return { success: true };
   } catch (e) {
@@ -129,6 +136,12 @@ export async function createAdmin(
     },
   });
 
+  await logAuditEvent({
+    action: "Admin Created",
+    description: `Created new admin user "${username}"`,
+    status: "Success",
+  });
+
   revalidatePath("/admin/admins");
   return { success: true };
 }
@@ -150,8 +163,21 @@ export async function deleteAdmin(
     return { success: false, error: "Cannot delete the last admin" };
   }
 
+  const adminToDelete = await prisma.admin.findUnique({
+    where: { id: adminId },
+    select: { username: true },
+  });
+
   await prisma.admin.delete({
     where: { id: adminId },
+  });
+
+  await logAuditEvent({
+    action: "Admin Deleted",
+    description: adminToDelete
+      ? `Deleted admin user "${adminToDelete.username}"`
+      : `Deleted admin user ID ${adminId}`,
+    status: "Success",
   });
 
   revalidatePath("/admin/admins");

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { logAuditEvent } from "@/actions/audit";
 
 export async function GET() {
   try {
@@ -34,6 +35,12 @@ export async function POST(request: Request) {
         employeeName,
         basePayPerDay: basePayPerDay ? parseFloat(basePayPerDay) : undefined,
       },
+    });
+
+    await logAuditEvent({
+      action: "Employee Created",
+      description: `Created new employee "${employeeName}" with base pay ${basePayPerDay || 0}`,
+      status: "Success",
     });
 
     return NextResponse.json({ employee });
