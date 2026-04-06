@@ -14,6 +14,26 @@ model Admin {
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
   sessions           Session[]
+  auditLogs          AuditLog[]
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  action      String
+  adminId     Int?
+  adminName   String
+  description String
+  status      String   @default("Info")
+  metadata    Json?
+  ipAddress   String?
+  createdAt   DateTime @default(now())
+
+  admin Admin? @relation(fields: [adminId], references: [id])
+
+  @@index([adminId])
+  @@index([createdAt])
+  @@index([action])
+  @@index([status])
 }
 
 model Employee {

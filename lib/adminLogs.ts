@@ -45,6 +45,19 @@ export function addAdminLog(entry: Omit<AdminLogEntry, "id" | "timestamp" | "adm
   const existing = getAdminLogs();
   const next = [log, ...existing].slice(0, 200);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+
+  fetch("/api/audit/log", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: entry.action,
+      description: entry.description,
+      status: entry.status,
+      adminName: admin,
+      metadata: entry.context,
+    }),
+  }).catch(console.error);
+
   return log;
 }
 
