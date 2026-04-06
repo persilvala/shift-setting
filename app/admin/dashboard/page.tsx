@@ -94,32 +94,23 @@ export default function DashboardPage() {
 
   const loadPayrollSummary = async () => {
     if (typeof window === "undefined") return;
-    const stored = localStorage.getItem("lastPayrollConfirmation");
-    if (!stored) {
-      setPayrollSummary(null);
-      return;
-    }
-
     try {
-      const parsed = JSON.parse(stored) as PayrollDashboardSummary;
-      setPayrollSummary(parsed);
-
-      try {
-        const response = await fetch("/api/payroll");
-        const data = await response.json();
-        if (data.payrolls && data.payrolls.length) {
-          const latest = data.payrolls[0];
-          setPayrollSummary((prev) => ({
-            ...(prev ?? parsed),
-            totalNet: latest.totalNetPay ?? prev?.totalNet,
-            employees: latest._count?.entries ?? prev?.employees ?? parsed.employees,
-            generatedAt: latest.generatedAt ?? prev?.generatedAt,
-          }));
-        }
-      } catch (err) {
-        console.error('[Dashboard] Failed to load payroll summary', err);
+      const response = await fetch("/api/payroll");
+      const data = await response.json();
+      if (data.payrolls && data.payrolls.length) {
+        const latest = data.payrolls[0];
+        setPayrollSummary({
+          startDate: new Date(latest.startDate).toLocaleDateString(),
+          endDate: new Date(latest.endDate).toLocaleDateString(),
+          employees: latest._count?.entries ?? 0,
+          totalNet: latest.totalNetPay ?? 0,
+          generatedAt: latest.generatedAt,
+        });
+      } else {
+        setPayrollSummary(null);
       }
-    } catch {
+    } catch (err) {
+      console.error('[Dashboard] Failed to load payroll summary', err);
       setPayrollSummary(null);
     }
   };
