@@ -1,0 +1,122 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Admin {
+  id                 String   @id @default(cuid())
+  username           String   @unique
+  passwordHash       String
+  mustChangePassword Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+model Employee {
+  id            String        @id @default(cuid())
+  employeeName  String        @unique
+  basePayPerDay Float?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  timesheetRows TimesheetRow[]
+  payrollEntries PayrollEntry[]
+
+  @@index([employeeName])
+}
+
+model Timesheet {
+  id         String         @id @default(cuid())
+  fileName   String
+  format     String
+  startDate  DateTime
+  endDate    DateTime
+  totalRows  Int
+  uploadedAt DateTime       @default(now())
+  rows       TimesheetRow[]
+  payrolls   Payroll[]
+
+  @@index([uploadedAt])
+}
+
+model TimesheetRow {
+  id               String    @id @default(cuid())
+  timesheetId      String
+  employeeId       String?
+  employeeName     String
+  userId          String?
+  date             DateTime
+  weekday          String?
+  dept             String?
+  beforeNoonIn     String?
+  beforeNoonOut    String?
+  afterNoonIn      String?
+  afterNoonOut     String?
+  overtimeIn       String?
+  overtimeOut      String?
+  totalHours       Float?
+  lateMinutes      Int?
+  earlyMinutes     Int?
+  workHours        Float?
+  workHoursActual  Float?
+  overtimeHours    Float?
+  workDays         String?
+  tripDays         Float?
+  absenceDays      Float?
+  leaveDays        Float?
+  addPayNormal     Float?
+  addPayOvertime   Float?
+  addPayAllowance  Float?
+  payrollDeduction Float?
+  shiftCode        String?
+  remark           String?
+  attendanceStatus String    @default("full_day")
+  createdAt        DateTime  @default(now())
+  timesheet        Timesheet @relation(fields: [timesheetId], references: [id], onDelete: Cascade)
+  employee         Employee? @relation(fields: [employeeId], references: [id])
+  payrollEntries   PayrollEntry[]
+
+  @@index([timesheetId])
+  @@index([employeeName])
+  @@index([employeeId])
+  @@index([date])
+}
+
+model Payroll {
+  id            String         @id @default(cuid())
+  timesheetId   String?
+  startDate     DateTime
+  endDate       DateTime
+  basePayPerDay Float
+  totalNetPay   Float
+  isEdited      Boolean        @default(false)
+  generatedAt   DateTime       @default(now())
+  timesheet     Timesheet?     @relation(fields: [timesheetId], references: [id])
+  entries       PayrollEntry[]
+
+  @@index([generatedAt])
+}
+
+model PayrollEntry {
+  id              String   @id @default(cuid())
+  payrollId       String
+  timesheetRowId  String?
+  employeeId      String
+  attendanceDays  Int      @default(0)
+  halfDays        Int      @default(0)
+  absentDays      Int      @default(0)
+  basePay         Float    @default(0)
+  addedValue      Float    @default(0)
+  subtractedValue Float    @default(0)
+  netPay          Float    @default(0)
+  isEdited        Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  payroll         Payroll  @relation(fields: [payrollId], references: [id], onDelete: Cascade)
+  timesheetRow    TimesheetRow? @relation(fields: [timesheetRowId], references: [id])
+  employee        Employee @relation(fields: [employeeId], references: [id])
+
+  @@index([payrollId])
+  @@index([employeeId])
+}

@@ -9,6 +9,8 @@
   --foreground: #0f172a;
   --accent: #2f6df6;
   --accent-strong: #2156c8;
+  --danger: #e54848;
+  --danger-strong: #c83232;
   --glow: radial-gradient(circle at 20% 20%, #c9d8ff 0, transparent 35%),
     radial-gradient(circle at 80% 0%, #b4ceff 0, transparent 38%),
     radial-gradient(circle at 50% 80%, #d8e6ff 0, transparent 35%);

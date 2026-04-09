@@ -1,37 +1,43 @@
 "use client";
 
-import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
+import { signIn } from "next-auth/react";
+import { useRouter, useSearchParams } from "next/navigation";
 
-const highlights = [
-  "Live coverage heatmaps",
-  "Exception-ready approvals",
-  "Audit-grade event logs",
-];
-
-const metrics = [
-  { title: "Shift readiness", value: "98%", detail: "coverage confirmed" },
-  { title: "Approvals today", value: "14", detail: "pending decisions" },
-  { title: "Open incidents", value: "2", detail: "under review" },
-];
-
-function LoginContent() {
+function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const callbackUrl = searchParams.get("callbackUrl") || "/admin/dashboard";
 
-  const handleLogin = (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [rememberMe, setRememberMe] = useState(false);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
     setLoading(true);
-    setMessage(null);
-    document.cookie = "demo-auth=1; path=/; max-age=86400";
-    const next = searchParams.get("next") || "/";
-    setTimeout(() => {
-      setMessage("Signed in. Redirecting…");
-      router.push(next);
-    }, 250);
+
+    try {
+      const result = await signIn("credentials", {
+        username,
+        password,
+        rememberMe: rememberMe ? "true" : "false",
+        redirect: false,
+      });
+
+      if (result?.error) {
+        setError("Invalid username or password");
+      } else {
+        router.push(callbackUrl);
+      }
+    } catch {
+      setError("An unexpected error occurred");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -54,7 +60,7 @@ function LoginContent() {
               </p>
             </div>
             <div className="flex flex-wrap gap-3">
-              {highlights.map((item) => (
+              {["Live coverage heatmaps", "Exception-ready approvals", "Audit-grade event logs"].map((item) => (
                 <div
                   key={item}
                   className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-white/80 px-4 py-2 text-sm text-[var(--foreground)] shadow-sm backdrop-blur"
@@ -65,7 +71,11 @@ function LoginContent() {
               ))}
             </div>
             <div className="grid gap-4 sm:grid-cols-3">
-              {metrics.map((metric) => (
+              {[
+                { title: "Shift readiness", value: "98%", detail: "coverage confirmed" },
+                { title: "Approvals today", value: "14", detail: "pending decisions" },
+                { title: "Open incidents", value: "2", detail: "under review" },
+              ].map((metric) => (
                 <div
                   key={metric.title}
                   className="rounded-2xl border border-[var(--border)] bg-white/80 px-4 py-5 backdrop-blur"
@@ -83,20 +93,28 @@ function LoginContent() {
           <div className="mb-8 space-y-2">
             <p className="text-sm uppercase tracking-[0.3em] text-[var(--muted)]">Welcome back</p>
             <h2 className="text-3xl font-semibold text-[var(--foreground)]">Sign in to continue</h2>
-            <p className="text-sm text-[var(--muted)]">Use your operations credentials to access dashboards and audit tools.</p>
+            <p className="text-sm text-[var(--muted)]">Use your admin credentials to access the dashboard.</p>
           </div>
 
-          <form className="space-y-6" onSubmit={handleLogin}>
+          <form className="space-y-6" onSubmit={handleSubmit}>
+            {error && (
+              <div className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-600">
+                {error}
+              </div>
+            )}
+
             <div className="space-y-2">
-              <label className="text-sm font-medium text-[var(--foreground)]" htmlFor="email">
-                Work email
+              <label className="text-sm font-medium text-[var(--foreground)]" htmlFor="username">
+                Username
               </label>
               <input
-                id="email"
-                name="email"
-                type="email"
+                id="username"
+                name="username"
+                type="text"
                 required
-                placeholder="you@shiftsetting.com"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="Enter username"
                 className="w-full rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-[var(--foreground)] shadow-inner outline-none ring-1 ring-transparent transition focus:border-[var(--accent)] focus:ring-[var(--accent)]/30"
               />
             </div>
@@ -110,6 +128,8 @@ function LoginContent() {
                 name="password"
                 type="password"
                 required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
                 className="w-full rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-[var(--foreground)] shadow-inner outline-none ring-1 ring-transparent transition focus:border-[var(--accent)] focus:ring-[var(--accent)]/30"
               />
@@ -119,14 +139,12 @@ function LoginContent() {
               <label className="inline-flex items-center gap-2">
                 <input
                   type="checkbox"
+                  checked={rememberMe}
+                  onChange={(e) => setRememberMe(e.target.checked)}
                   className="h-4 w-4 rounded border-[var(--border)] bg-[var(--surface)] text-[var(--accent)] focus:ring-[var(--accent)]"
-                  defaultChecked
                 />
-                Keep me signed in
+                Remember me for 7 days
               </label>
-              <Link href="#" className="text-[var(--accent)] hover:text-[var(--accent-strong)]">
-                Forgot access?
-              </Link>
             </div>
 
             <button
@@ -134,30 +152,9 @@ function LoginContent() {
               disabled={loading}
               className="group relative w-full overflow-hidden rounded-xl bg-gradient-to-r from-[var(--accent-strong)] to-[var(--accent)] px-4 py-3 text-center text-base font-semibold text-white shadow-lg shadow-[rgba(47,109,246,0.24)] transition hover:scale-[1.01] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-80"
             >
-              <span className="relative">{loading ? "Signing in…" : "Sign in"}</span>
+              <span className="relative">{loading ? "Signing in..." : "Sign in"}</span>
             </button>
-            <p className="text-xs text-[var(--muted)]">This demo login sets a local cookie to unlock the dashboard view.</p>
-            <div aria-live="polite" className="text-sm font-medium text-[var(--accent)]">
-              {message}
-            </div>
           </form>
-
-          <div className="mt-8 space-y-3 rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-4 py-4 text-sm text-[var(--muted)]">
-            <div className="flex items-start gap-3">
-              <span className="mt-1 h-2 w-2 rounded-full bg-[var(--accent)]" />
-              <div>
-                <p className="font-semibold text-[var(--foreground)]">Need access?</p>
-                <p>Contact an admin to be added to the on-call rotation or request a temporary approval window.</p>
-              </div>
-            </div>
-            <div className="flex items-start gap-3">
-              <span className="mt-1 h-2 w-2 rounded-full bg-emerald-500" />
-              <div>
-                <p className="font-semibold text-[var(--foreground)]">Status</p>
-                <p>System healthy — next sync in 4 minutes.</p>
-              </div>
-            </div>
-          </div>
         </section>
       </div>
     </div>
@@ -166,14 +163,8 @@ function LoginContent() {
 
 export default function LoginPage() {
   return (
-    <Suspense
-      fallback={
-        <div className="flex min-h-screen items-center justify-center text-[var(--muted)]">
-          Loading…
-        </div>
-      }
-    >
-      <LoginContent />
+    <Suspense fallback={<div className="flex min-h-screen items-center justify-center text-[var(--muted)]">Loading...</div>}>
+      <LoginForm />
     </Suspense>
   );
 }

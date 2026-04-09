@@ -1,230 +1,565 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { TopNav } from "@/components/layout/TopNav";
+import { PageHeader } from "@/components/PageHeader";
+import type { ParsedTimesheetRow, DashboardRow, FilterState } from "@/lib/types";
+import { UploadTimesheet } from "@/components/UploadTimesheet";
+import { AttendanceSummaryTable } from "@/components/AttendanceSummaryTable";
+import type { AttendanceSummary } from "@/lib/attendanceCalculator";
+import { Pagination } from "@/components/Pagination";
 
-const summary = [
-  { title: "Active shifts", value: "42", change: "+6 today", tone: "accent" },
-  { title: "Pending approvals", value: "14", change: "3 urgent", tone: "amber" },
-];
+const initialFilters: FilterState = {
+  employee: "",
+  dept: "all",
+  startDate: "",
+  endDate: "",
+};
 
-const schedule = [
-  {
-    userId: "1",
-    name: "Percy",
-    department: "CICS",
-    calendar: "07:00 - 15:00",
-    weekShift: "Mon - Fri",
-  },
-  {
-    userId: "2",
-    name: "Dan",
-    department: "CICS",
-    calendar: "09:00 - 17:00",
-    weekShift: "Mon - Fri",
-  },
-  {
-    userId: "3",
-    name: "Lanz",
-    department: "CICS",
-    calendar: "11:00 - 19:00",
-    weekShift: "Tue - Sat",
-  },
-  {
-    userId: "4",
-    name: "Joshaiah",
-    department: "CICS",
-    calendar: "13:00 - 21:00",
-    weekShift: "Wed - Sun",
-  },
-];
+type TimesheetWithRows = {
+  id: string;
+  fileName: string;
+  format: string;
+  startDate: string;
+  endDate: string;
+  totalRows: number;
+  uploadedAt: string;
+  rows: DashboardRow[];
+};
 
-type ScheduleRow = (typeof schedule)[number];
+type PayrollDashboardSummary = {
+  startDate: string;
+  endDate: string;
+  employees: number;
+  totalNet?: number;
+  shifts?: number;
+  generatedAt?: string;
+};
+
+function asDate(value: string | null): Date | null {
+  if (!value) return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function getHours(row: ParsedTimesheetRow | TimesheetWithRows["rows"][0]) {
+  return (
+    (row as ParsedTimesheetRow).workHoursActual ??
+    (row as ParsedTimesheetRow).workHours ??
+    (row as TimesheetWithRows["rows"][0]).workHoursActual ??
+    (row as TimesheetWithRows["rows"][0]).workHours ??
+    row.totalHours ??
+    0
+  );
+}
+
+function formatDateRange(dates: Set<string>) {
+  const unique = Array.from(dates).map((d) => new Date(d)).filter((d) => !Number.isNaN(d.getTime()));
+  if (!unique.length) return "—";
+  unique.sort((a, b) => a.getTime() - b.getTime());
+  const start = unique[0];
+  const end = unique[unique.length - 1];
+  const fmt = (d: Date) => d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return unique.length === 1 ? fmt(start) : `${fmt(start)} – ${fmt(end)}`;
+}
 
 export default function DashboardPage() {
-  const [selected, setSelected] = useState<ScheduleRow | null>(null);
-  const today = new Date();
-  const formattedDate = today.toLocaleDateString("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
+  const [rows, setRows] = useState<ParsedTimesheetRow[]>([]);
+  const [dbRows, setDbRows] = useState<DashboardRow[]>([]);
+  const [filters, setFilters] = useState<FilterState>(initialFilters);
+  const [loading, setLoading] = useState(true);
+  const [dataSource, setDataSource] = useState<"database" | "session">("session");
+  const [refreshing, setRefreshing] = useState(false);
+  const [payrollSummary, setPayrollSummary] = useState<PayrollDashboardSummary | null>(null);
+  const [attendanceSummary, setAttendanceSummary] = useState<AttendanceSummary[]>([]);
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 10;
 
-  const monthDays = (() => {
-    const year = today.getFullYear();
-    const month = today.getMonth();
-    const firstDay = new Date(year, month, 1).getDay();
-    const totalDays = new Date(year, month + 1, 0).getDate();
-    const days = Array(firstDay).fill(null).concat(
-      Array.from({ length: totalDays }, (_, i) => i + 1)
-    );
-    while (days.length % 7 !== 0) days.push(null);
-    return { year, month, days };
-  })();
+  const refreshData = async () => {
+    setRefreshing(true);
+    try {
+      const response = await fetch("/api/timesheets");
+      const data = await response.json();
+
+      if (data.timesheets && data.timesheets.length > 0) {
+        const allTimesheets = await Promise.all(
+          data.timesheets.map(async (ts: { id: string }) => {
+            const detailResponse = await fetch(`/api/timesheets/${ts.id}`);
+            const detailData = await detailResponse.json();
+            return detailData.timesheet;
+          })
+        );
+
+        const combinedRows = allTimesheets.flatMap((ts: { rows: DashboardRow[] }) => ts.rows);
+        setDbRows(combinedRows);
+        setDataSource("database");
+        console.log('[Dashboard] Refreshed', combinedRows.length, 'total rows from all timesheets');
+      }
+    } catch (err) {
+      console.error('[Dashboard] Failed to refresh:', err);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const loadPayrollSummary = async () => {
+    if (typeof window === "undefined") return;
+    const stored = localStorage.getItem("lastPayrollConfirmation");
+    if (!stored) {
+      setPayrollSummary(null);
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(stored) as PayrollDashboardSummary;
+      setPayrollSummary(parsed);
+
+      try {
+        const response = await fetch("/api/payroll");
+        const data = await response.json();
+        if (data.payrolls && data.payrolls.length) {
+          const latest = data.payrolls[0];
+          setPayrollSummary((prev) => ({
+            ...(prev ?? parsed),
+            totalNet: latest.totalNetPay ?? prev?.totalNet,
+            employees: latest._count?.entries ?? prev?.employees ?? parsed.employees,
+            generatedAt: latest.generatedAt ?? prev?.generatedAt,
+          }));
+        }
+      } catch (err) {
+        console.error('[Dashboard] Failed to load payroll summary', err);
+      }
+    } catch {
+      setPayrollSummary(null);
+    }
+  };
+
+  useEffect(() => {
+    // Fetch ALL timesheets from database and combine rows
+    const fetchFromDatabase = async () => {
+      try {
+        console.log('[Dashboard] Fetching all timesheets from database...');
+        const response = await fetch("/api/timesheets");
+        const data = await response.json();
+        console.log('[Dashboard] Timesheets API response:', data);
+
+        if (data.timesheets && data.timesheets.length > 0) {
+          console.log('[Dashboard] Found', data.timesheets.length, 'timesheets');
+
+          // Fetch all timesheets and combine their rows
+          const allTimesheets = await Promise.all(
+            data.timesheets.map(async (ts: { id: string }) => {
+              const detailResponse = await fetch(`/api/timesheets/${ts.id}`);
+              const detailData = await detailResponse.json();
+              return detailData.timesheet;
+            })
+          );
+
+          // Combine all rows from all timesheets
+          const combinedRows = allTimesheets.flatMap((ts: { rows: DashboardRow[] }) => ts.rows);
+          console.log('[Dashboard] Combined', combinedRows.length, 'total rows from all timesheets');
+
+          setDbRows(combinedRows);
+          setDataSource("database");
+          console.log('[Dashboard] dataSource set to: database');
+        } else {
+          console.log('[Dashboard] No timesheets found in database');
+        }
+      } catch (err) {
+        console.error('[Dashboard] Failed to fetch from database:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchFromDatabase();
+    loadPayrollSummary();
+
+    // Listen for timesheet updates
+    const handleTimesheetUpdated = () => {
+      console.log('[Dashboard] Timesheet updated, refreshing...');
+      fetchFromDatabase();
+    };
+
+    const handlePayrollGenerated = () => {
+      console.log('[Dashboard] Payroll generated, loading summary...');
+      loadPayrollSummary();
+    };
+
+    window.addEventListener('timesheet-updated', handleTimesheetUpdated);
+    window.addEventListener('payroll-generated', handlePayrollGenerated);
+
+    // Also check session storage for compatibility
+    const stored = sessionStorage.getItem("timesheetData");
+    console.log('[Dashboard] SessionStorage data:', stored ? JSON.parse(stored).length : 0, 'rows');
+    if (!stored) return;
+    try {
+      const parsed = JSON.parse(stored) as ParsedTimesheetRow[];
+      setRows(parsed);
+    } catch {
+      setRows([]);
+    }
+
+    return () => {
+      window.removeEventListener('timesheet-updated', handleTimesheetUpdated);
+      window.removeEventListener('payroll-generated', handlePayrollGenerated);
+    };
+  }, []);
+
+  const handleUploadResults = (rows: AttendanceSummary[]) => {
+    setAttendanceSummary(rows);
+  };
+
+  const activeRows: DashboardRow[] = dbRows.length > 0 ? dbRows : (rows as DashboardRow[]);
+
+  const employees = useMemo(() => {
+    return Array.from(new Set(activeRows.map((r) => r.employeeName).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  }, [activeRows]);
+
+  const departments = useMemo(() => {
+    return Array.from(new Set(activeRows.map((r) => r.dept || "").filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  }, [activeRows]);
+
+  const filteredRows = useMemo(() => {
+    const start = asDate(filters.startDate || null);
+    const end = asDate(filters.endDate || null);
+
+    return activeRows.filter((row) => {
+      if (filters.employee && !(row.employeeName || "").toLowerCase().includes(filters.employee.toLowerCase())) return false;
+      if (filters.dept !== "all" && (row.dept || "") !== filters.dept) return false;
+
+      if (start || end) {
+        if (!row.date) return false;
+        const d = asDate(row.date);
+        if (!d) return false;
+        if (start && d < start) return false;
+        if (end && d > end) return false;
+      }
+      return true;
+    });
+  }, [filters, activeRows]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [filters, activeRows.length]);
+
+  const aggregates = useMemo(() => {
+    const byEmployee = new Map<
+      string,
+      {
+        dept: string;
+        dates: Set<string>;
+        hours: number;
+        overtime: number;
+        lateMinutes: number;
+        earlyMinutes: number;
+        absenceDays: number;
+        leaveDays: number;
+      }
+    >();
+
+    let totalHours = 0;
+    let totalOvertime = 0;
+    let totalLate = 0;
+    let totalEarly = 0;
+
+    filteredRows.forEach((row) => {
+      const key = row.employeeName || "Unknown";
+      if (!byEmployee.has(key)) {
+        byEmployee.set(key, {
+          dept: row.dept || "",
+          dates: new Set<string>(),
+          hours: 0,
+          overtime: 0,
+          lateMinutes: 0,
+          earlyMinutes: 0,
+          absenceDays: 0,
+          leaveDays: 0,
+        });
+      }
+
+      const entry = byEmployee.get(key)!;
+      if (row.date) entry.dates.add(row.date);
+      entry.hours += getHours(row) || 0;
+      entry.overtime += row.overtimeHours ?? 0;
+      entry.lateMinutes += row.lateMinutes ?? 0;
+      entry.earlyMinutes += row.earlyMinutes ?? 0;
+      entry.absenceDays += row.absenceDays ?? 0;
+      entry.leaveDays += row.leaveDays ?? 0;
+
+      totalHours += getHours(row) || 0;
+      totalOvertime += row.overtimeHours ?? 0;
+      totalLate += row.lateMinutes ?? 0;
+      totalEarly += row.earlyMinutes ?? 0;
+    });
+
+    const attendance = Array.from(byEmployee.entries())
+      .map(([name, data]) => ({
+        employeeName: name,
+        dept: data.dept,
+        presentDays: data.dates.size,
+        absenceDays: data.absenceDays,
+        leaveDays: data.leaveDays,
+        hours: Math.round(data.hours * 100) / 100,
+        overtime: Math.round(data.overtime * 100) / 100,
+        lateMinutes: data.lateMinutes,
+        earlyMinutes: data.earlyMinutes,
+        dateLabel: formatDateRange(data.dates),
+      }))
+      .sort((a, b) => a.employeeName.localeCompare(b.employeeName));
+
+    return {
+      totalHours,
+      totalOvertime,
+      totalLate,
+      totalEarly,
+      employees: byEmployee.size,
+      attendance,
+    };
+  }, [filteredRows]);
+
+  const totalPages = Math.max(1, Math.ceil((aggregates.attendance?.length ?? 0) / PAGE_SIZE));
+  const pageSafe = Math.min(page, totalPages);
+  const paginatedAttendance = aggregates.attendance?.slice((pageSafe - 1) * PAGE_SIZE, pageSafe * PAGE_SIZE) ?? [];
+
+  const hasData = activeRows.length > 0;
 
   return (
-    <div className="space-y-8">
-      <div className="grid gap-4 md:grid-cols-3">
-        {summary.map((item) => (
-          <div
-            key={item.title}
-            className="rounded-3xl border border-[var(--border)]/70 bg-[var(--panel)] px-6 py-6 shadow-[0_14px_40px_rgba(16,40,94,0.08)]"
-          >
-            <p className="text-xs uppercase tracking-[0.28em] text-[var(--muted)]">
-              {item.title}
-            </p>
-            <div className="flex items-end justify-between pt-3">
-              <p className="text-4xl font-semibold text-[var(--foreground)]">{item.value}</p>
-              <span
-                className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                  item.tone === "green"
-                    ? "bg-emerald-100 text-emerald-700"
-                    : item.tone === "accent"
-                      ? "bg-[var(--accent)]/15 text-[var(--accent)]"
-                      : "bg-amber-100 text-amber-700"
-                }`}
-              >
-                {item.change}
-              </span>
+    <div className="pt-20 pb-12 md:pb-10">
+      <TopNav />
+      <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-8 px-4 pt-6 sm:px-6 md:pt-10 lg:px-10">
+        <header className="space-y-4">
+          <PageHeader>Dashboard</PageHeader>
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div className="space-y-2">
+              <h1 className="text-3xl font-semibold leading-tight text-[var(--foreground)] md:text-4xl">
+                Timesheet-backed attendance and payroll snapshot.
+              </h1>
+              <p className="max-w-3xl text-sm text-[var(--muted)]">
+                View totals from all uploaded timesheets, apply filters, and jump to upload or payroll when you need to refresh or compute.
+              </p>
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-[var(--muted)]">
+                  Loaded rows: {activeRows.length || 0} {activeRows.length ? dataSource === "database" ? "(from database)" : "(from session)" : "— upload to populate"}
+                </span>
+                {dataSource === "database" && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                    DB
+                  </span>
+                )}
+                {refreshing && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">
+                    Refreshing...
+                  </span>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
-
-      <div className="grid gap-6">
-        <section className="rounded-3xl border border-[var(--border)]/70 bg-[var(--panel)] p-6 shadow-[0_18px_50px_rgba(16,40,94,0.08)]">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs uppercase tracking-[0.28em] text-[var(--muted)]">Today</p>
-              <h2 className="text-xl font-semibold text-[var(--foreground)]">Coverage overview</h2>
-            </div>
-            <button className="rounded-full border border-[var(--border)] px-3 py-1 text-xs font-medium text-[var(--muted)] hover:border-[var(--accent)] hover:text-[var(--foreground)]">
-              Export snapshot
+            <button
+              onClick={refreshData}
+              disabled={refreshing}
+              className="inline-flex items-center gap-2 rounded-full border border-[var(--accent)] bg-[var(--accent)]/10 px-4 py-2 text-sm font-semibold text-[var(--accent)] transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              Refresh
             </button>
           </div>
-          <div className="mt-5 overflow-hidden rounded-3xl border border-[var(--border)]/70 bg-white/80 shadow-[0_12px_38px_rgba(16,40,94,0.06)]">
-            <table className="w-full text-sm">
-              <thead className="bg-white text-[var(--muted)]">
-                <tr>
-                  <th className="px-5 py-3 text-left font-semibold text-xs uppercase tracking-[0.24em]">User ID</th>
-                  <th className="px-5 py-3 text-left font-semibold text-xs uppercase tracking-[0.24em]">Name</th>
-                  <th className="px-5 py-3 text-left font-semibold text-xs uppercase tracking-[0.24em]">Department</th>
-                  <th className="px-5 py-3 text-left font-semibold text-xs uppercase tracking-[0.24em]">Calendar</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--border)]/70 bg-[#f7faff] text-[var(--foreground)]">
-                {schedule.map((row) => (
-                  <tr key={row.userId}>
-                    <td className="px-5 py-4 font-semibold">{row.userId}</td>
-                    <td className="px-5 py-4 text-[var(--muted)]">{row.name}</td>
-                    <td className="px-5 py-4 text-[var(--muted)]">{row.department}</td>
-                    <td className="px-5 py-4">
-                      <span className="mr-2 inline-flex items-center rounded-full border border-[var(--border)] bg-white px-3 py-1 text-xs font-semibold text-[var(--foreground)]">
-                        {row.weekShift}
-                      </span>
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-white px-3 py-2 text-xs font-semibold text-[var(--foreground)] shadow-sm hover:border-[var(--accent)] hover:text-[var(--accent)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
-                        aria-label={`Open calendar for ${row.name}`}
-                        onClick={() => setSelected((prev) => (prev?.userId === row.userId ? null : row))}
-                      >
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          width="16"
-                          height="16"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="1.8"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
-                          <rect x="4" y="5" width="16" height="15" rx="3" />
-                          <path d="M8 3v4M16 3v4M4 10h16" />
-                          <path d="M10 14h4" />
-                        </svg>
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        </header>
+
+        {/* Upload removed per request; summaries can be fed from API/session if needed */}
+
+        <section className="rounded-3xl border border-[var(--border)] bg-[var(--panel)]/90 p-6 shadow-[0_18px_50px_rgba(16,40,94,0.08)]">
+          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+            <div className="space-y-2">
+              <p className="text-xs uppercase tracking-[0.26em] text-[var(--muted)]">Filters</p>
+              <h2 className="text-xl font-semibold text-[var(--foreground)]">Slice by employee, department, and date range</h2>
+            </div>
+            <button
+              type="button"
+              onClick={() => setFilters(initialFilters)}
+              className="self-start rounded-full border border-[var(--border)] px-4 py-2 text-xs font-semibold text-[var(--muted)] transition hover:border-[var(--accent)] hover:text-[var(--foreground)]"
+            >
+              Reset filters
+            </button>
           </div>
-          {selected && (
-            <div className="mt-4 rounded-2xl border border-[var(--border)]/70 bg-[var(--surface)] p-4 shadow-[0_10px_28px_rgba(16,40,94,0.06)]">
-              <div className="flex items-center justify-between">
-                <div className="space-y-1">
-                  <p className="text-xs uppercase tracking-[0.28em] text-[var(--muted)]">Schedule</p>
-                  <h3 className="text-lg font-semibold text-[var(--foreground)]">{selected.name}</h3>
-                  <p className="text-sm text-[var(--muted)]">Dept: {selected.department}</p>
-                  <p className="text-sm text-[var(--muted)]">Week shift: {selected.weekShift}</p>
-                </div>
-                <button
-                  type="button"
-                  className="rounded-full border border-[var(--border)] px-3 py-1 text-xs font-semibold text-[var(--muted)] hover:border-[var(--accent)] hover:text-[var(--accent)]"
-                  onClick={() => setSelected(null)}
-                >
-                  Close
-                </button>
+
+          <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            <div>
+              <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">Employee</label>
+              <input
+                type="search"
+                value={filters.employee}
+                onChange={(e) => setFilters((f) => ({ ...f, employee: e.target.value }))}
+                list="employee-suggestions"
+                placeholder="Search employee"
+                className="mt-1 w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
+              />
+              <datalist id="employee-suggestions">
+                {employees.map((name) => (
+                  <option key={name} value={name} />
+                ))}
+              </datalist>
+            </div>
+            <div>
+              <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">Department</label>
+              <select
+                value={filters.dept}
+                onChange={(e) => setFilters((f) => ({ ...f, dept: e.target.value }))}
+                className="mt-1 w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
+              >
+                <option value="all">All departments</option>
+                {departments.map((dept) => (
+                  <option key={dept} value={dept}>
+                    {dept}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">Start date</label>
+              <input
+                type="date"
+                value={filters.startDate}
+                onChange={(e) => setFilters((f) => ({ ...f, startDate: e.target.value }))}
+                className="mt-1 w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--muted)]">End date</label>
+              <input
+                type="date"
+                value={filters.endDate}
+                onChange={(e) => setFilters((f) => ({ ...f, endDate: e.target.value }))}
+                className="mt-1 w-full rounded-xl border border-[var(--border)] bg-white px-3 py-2 text-sm"
+              />
+            </div>
+          </div>
+        </section>
+
+        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)]/85 p-5 shadow-[0_20px_60px_rgba(16,40,94,0.08)]">
+            <p className="text-xs uppercase tracking-[0.26em] text-[var(--muted)]">Total hours</p>
+            <p className="pt-3 text-3xl font-semibold text-[var(--foreground)]">{aggregates.totalHours.toFixed(2)}</p>
+            <p className="text-sm text-[var(--muted)]">Filtered sum of hours</p>
+          </div>
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)]/85 p-5 shadow-[0_20px_60px_rgba(16,40,94,0.08)]">
+            <p className="text-xs uppercase tracking-[0.26em] text-[var(--muted)]">Overtime hours</p>
+            <p className="pt-3 text-3xl font-semibold text-[var(--foreground)]">{aggregates.totalOvertime.toFixed(2)}</p>
+            <p className="text-sm text-[var(--muted)]">Across filtered rows</p>
+          </div>
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)]/85 p-5 shadow-[0_20px_60px_rgba(16,40,94,0.08)]">
+            <p className="text-xs uppercase tracking-[0.26em] text-[var(--muted)]">Late minutes</p>
+            <p className="pt-3 text-3xl font-semibold text-[var(--foreground)]">{aggregates.totalLate}</p>
+            <p className="text-sm text-[var(--muted)]">Sum of late minutes</p>
+          </div>
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)]/85 p-5 shadow-[0_20px_60px_rgba(16,40,94,0.08)]">
+            <p className="text-xs uppercase tracking-[0.26em] text-[var(--muted)]">Undertime (early) minutes</p>
+            <p className="pt-3 text-3xl font-semibold text-[var(--foreground)]">{aggregates.totalEarly}</p>
+            <p className="text-sm text-[var(--muted)]">Sum of early/undertime minutes</p>
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-[var(--border)] bg-[var(--panel)]/90 p-6 shadow-[0_18px_50px_rgba(16,40,94,0.08)]">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-xs uppercase tracking-[0.26em] text-[var(--muted)]">Payroll visibility</p>
+              <h3 className="text-xl font-semibold text-[var(--foreground)]">Only shown after confirmed generation</h3>
+              <p className="text-sm text-[var(--muted)]">Payroll totals stay hidden until a generation is confirmed on the Payroll page.</p>
+            </div>
+            <span className={`rounded-full px-3 py-1 text-xs font-semibold ${payrollSummary ? "border border-emerald-200 bg-emerald-50 text-emerald-700" : "border border-amber-200 bg-amber-50 text-amber-700"}`}>
+              {payrollSummary ? "Confirmed" : "Awaiting confirmation"}
+            </span>
+          </div>
+
+          {payrollSummary ? (
+            <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="rounded-2xl border border-[var(--border)] bg-white p-4 shadow-sm">
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Payroll range</p>
+                <p className="pt-2 text-lg font-semibold text-[var(--foreground)]">{payrollSummary.startDate} → {payrollSummary.endDate}</p>
+                {payrollSummary.generatedAt && <p className="text-xs text-[var(--muted)]">Generated {new Date(payrollSummary.generatedAt).toLocaleString()}</p>}
               </div>
-              <div className="mt-3 grid gap-3 rounded-xl border border-[var(--border)] bg-[linear-gradient(160deg,#0b3018,#0f3c1f)] p-3 text-sm text-white shadow-inner">
-                <div className="flex items-center justify-between">
-                  <div className="space-y-1">
-                    <span className="text-xs uppercase tracking-[0.24em] text-white/70">Today</span>
-                    <span className="text-lg font-semibold">{formattedDate}</span>
-                  </div>
-                  <span className="rounded-full bg-white/15 px-3 py-1 text-xs font-semibold">
-                    {selected.calendar}
-                  </span>
-                </div>
-                <div className="grid grid-cols-7 gap-1 text-center text-xs">
-                  {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d) => (
-                    <span key={d} className="py-1 text-white/70">
-                      {d}
-                    </span>
-                  ))}
-                  {monthDays.days.map((day, idx) => {
-                    const isToday = day === today.getDate();
-                    return (
-                      <span
-                        key={`${day ?? "blank"}-${idx}`}
-                        className={`flex h-9 w-9 items-center justify-center rounded-full ${
-                          day === null
-                            ? "text-transparent"
-                            : isToday
-                              ? "bg-emerald-400 text-black font-semibold"
-                              : "bg-white/5 text-white"
-                        }`}
-                      >
-                        {day ?? ""}
-                      </span>
-                    );
-                  })}
-                </div>
-                <div className="flex items-center justify-between text-xs text-white/80">
-                  <span>Duration</span>
-                  <span className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2 py-1">
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <circle cx="12" cy="12" r="10" />
-                      <path d="M12 6v6l3 3" />
-                    </svg>
-                    30 mins
-                  </span>
-                </div>
+              <div className="rounded-2xl border border-[var(--border)] bg-white p-4 shadow-sm">
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Employees paid</p>
+                <p className="pt-2 text-2xl font-semibold text-[var(--foreground)]">{payrollSummary.employees}</p>
               </div>
+              <div className="rounded-2xl border border-[var(--border)] bg-white p-4 shadow-sm">
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Total payroll amount</p>
+                <p className="pt-2 text-2xl font-semibold text-[var(--accent)]">{payrollSummary.totalNet ? `$${payrollSummary.totalNet.toFixed(2)}` : "—"}</p>
+              </div>
+              <div className="rounded-2xl border border-[var(--border)] bg-white p-4 shadow-sm">
+                <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Shifts included</p>
+                <p className="pt-2 text-2xl font-semibold text-[var(--foreground)]">{payrollSummary.shifts ?? "—"}</p>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-4 rounded-2xl border border-dashed border-[var(--border)] bg-[var(--surface)] px-5 py-6 text-sm text-[var(--muted)]">
+              Generate payroll and confirm the modal to display the summary here.
             </div>
           )}
         </section>
-      </div>
+
+        <section className="rounded-3xl border border-[var(--border)] bg-[var(--panel)]/90 p-6 shadow-[0_24px_70px_rgba(16,40,94,0.1)]">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-xs uppercase tracking-[0.26em] text-[var(--muted)]">Attendance summary</p>
+              <h3 className="text-xl font-semibold text-[var(--foreground)]">Per employee (filtered)</h3>
+              <p className="text-sm text-[var(--muted)]">Present days are unique dates in the parsed timesheet. Leave/absence use provided fields when available.</p>
+            </div>
+            <span className="rounded-full border border-[var(--border)] bg-white px-3 py-1 text-xs font-semibold text-[var(--muted)]">Employees: {aggregates.employees}</span>
+          </div>
+
+            <div className="mt-5 overflow-hidden rounded-2xl border border-[var(--border)] bg-white/90 shadow-[0_12px_32px_rgba(16,40,94,0.06)]">
+              <div className="overflow-x-auto">
+                <table className="min-w-[960px] w-full text-sm">
+                <thead className="bg-[var(--surface)] text-[var(--muted)]">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Employee</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Dept</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Present</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Dates</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Present</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Leave</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Absent</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Hours</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">OT Hours</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Late (min)</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.24em]">Undertime (min)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border)]/70 text-[var(--foreground)]">
+                  {!hasData || paginatedAttendance.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} className="px-4 py-4 text-center text-[var(--muted)]">
+                        {hasData ? "No rows match the current filters." : "Upload a timesheet to populate the dashboard."}
+                      </td>
+                    </tr>
+                  ) : (
+                    paginatedAttendance.map((entry) => (
+                      <tr key={entry.employeeName} className="hover:bg-[var(--surface)]/60">
+                        <td className="px-4 py-3 font-semibold text-[var(--foreground)]">{entry.employeeName}</td>
+                        <td className="px-4 py-3 text-[var(--muted)]">{entry.dept || "—"}</td>
+                        <td className="px-4 py-3 text-[var(--muted)]">{entry.dateLabel}</td>
+                        <td className="px-4 py-3 text-[var(--muted)]">{entry.presentDays}</td>
+                        <td className="px-4 py-3 text-[var(--muted)]">{entry.leaveDays}</td>
+                        <td className="px-4 py-3 text-[var(--muted)]">{entry.absenceDays}</td>
+                        <td className="px-4 py-3 text-[var(--muted)]">{entry.hours.toFixed(2)}</td>
+                        <td className="px-4 py-3 text-[var(--muted)]">{entry.overtime.toFixed(2)}</td>
+                        <td className="px-4 py-3 text-[var(--muted)]">{entry.lateMinutes}</td>
+                        <td className="px-4 py-3 text-[var(--muted)]">{entry.earlyMinutes}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex items-center justify-between border-t border-[var(--border)] bg-white/90 px-4 py-3 text-sm text-[var(--muted)]">
+              <Pagination page={pageSafe} totalPages={totalPages} onChange={setPage} />
+              <span className="text-xs">{aggregates.attendance.length} employee(s)</span>
+            </div>
+          </div>
+        </section>
+      </main>
     </div>
   );
 }

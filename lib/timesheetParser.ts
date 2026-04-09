@@ -1,0 +1,1507 @@
+import * as XLSX from "xlsx";
+import { PDFParse } from "pdf-parse";
+import type { ParsedTimesheetRow } from "@/lib/types";
+
+export type { ParsedTimesheetRow } from "@/lib/types";
+
+type NormalizedField = "employeeName" | "date" | "timeIn" | "timeOut" | "hours";
+
+type ParseResult = {
+  format: "excel" | "pdf";
+  rows: ParsedTimesheetRow[];
+  warnings: string[];
+  startDate?: string | null;
+  endDate?: string | null;
+};
+
+function isLikelyName(value: string | null | undefined) {
+  if (!value) return false;
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  const lower = trimmed.toLowerCase();
+  const stopWords = ["before noon", "in", "out", "login", "logout", "time in", "time out"];
+  if (stopWords.includes(lower)) return false;
+  // Reject strings that are only numbers, dashes, or a single character
+  if (/^[-0-9.\s]+$/.test(trimmed)) return false;
+  if (trimmed.length < 2) return false;
+  // Require at least one letter
+  if (!/[a-z]/i.test(trimmed)) return false;
+  return true;
+}
+
+const HEADER_MAP: Record<string, NormalizedField> = {
+  name: "employeeName",
+  "employee name": "employeeName",
+  employee: "employeeName",
+  "full name": "employeeName",
+  "staff name": "employeeName",
+  "team member": "employeeName",
+  "timein": "timeIn",
+  "timeout": "timeOut",
+  "clockin": "timeIn",
+  "clockout": "timeOut",
+
+  date: "date",
+  "work date": "date",
+  "shift date": "date",
+
+  "time in": "timeIn",
+  in: "timeIn",
+  "clock in": "timeIn",
+  login: "timeIn",
+
+  "time out": "timeOut",
+  out: "timeOut",
+  "clock out": "timeOut",
+  logout: "timeOut",
+
+  hours: "hours",
+  "total hours": "hours",
+  "hrs": "hours",
+  "total hrs": "hours",
+};
+
+const REQUIRED_FIELDS: NormalizedField[] = ["employeeName", "date"];
+
+const EXCEL_EPOCH = new Date(Date.UTC(1899, 11, 30)).getTime();
+
+function normalizeHeaderLabel(label: string) {
+  const withSpaces = label
+    // insert spaces before camelCase boundaries (e.g., TimeIn -> Time In)
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2");
+
+  return withSpaces
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function mapHeaderIndices(headers: (string | number | Date | undefined)[]) {
+  const mapping: Partial<Record<NormalizedField, number>> = {};
+
+  headers.forEach((header, index) => {
+    const normalized = normalizeHeaderLabel(String(header ?? ""));
+    const field = HEADER_MAP[normalized];
+    if (field && mapping[field] === undefined) {
+      mapping[field] = index;
+    }
+  });
+
+  return mapping;
+}
+
+function excelSerialToDate(value: number) {
+  const ms = EXCEL_EPOCH + value * 24 * 60 * 60 * 1000;
+  const date = new Date(ms);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function parseDateValue(value: unknown): string | null {
+  if (value instanceof Date) {
+    return value.toISOString().slice(0, 10);
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const date = excelSerialToDate(value);
+    if (date) return date.toISOString().slice(0, 10);
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = new Date(trimmed);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString().slice(0, 10);
+    }
+  }
+
+  return null;
+}
+
+function parseHoursValue(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.round(value * 100) / 100;
+  }
+
+  if (typeof value === "string") {
+    const cleaned = value.replace(/[^0-9.,-]/g, "");
+    const normalized = cleaned.includes(",") && !cleaned.includes(".")
+      ? cleaned.replace(",", ".")
+      : cleaned;
+    const parsed = parseFloat(normalized);
+    if (!Number.isNaN(parsed)) {
+      return Math.round(parsed * 100) / 100;
+    }
+  }
+
+  return null;
+}
+
+function minutesToLabel(totalMinutes: number) {
+  const hours = Math.floor(totalMinutes / 60) % 24;
+  const minutes = Math.abs(totalMinutes % 60);
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function parseTimeToMinutes(value: unknown): number | null {
+  if (value instanceof Date) {
+    return value.getHours() * 60 + value.getMinutes();
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    // Excel stores times as a fraction of a day.
+    const minutes = Math.round((value % 1) * 24 * 60);
+    if (!Number.isNaN(minutes)) return minutes;
+
+    const date = excelSerialToDate(value);
+    if (date) return date.getHours() * 60 + date.getMinutes();
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+
+    const numeric = Number(trimmed);
+    if (!Number.isNaN(numeric)) {
+      if (numeric > 24) return null;
+      return Math.round(numeric * 60);
+    }
+
+    const match = trimmed.match(/^([0-2]?\d):([0-5]\d)(?:\s*([AP]M))?$/i);
+    if (match) {
+      let hours = Number(match[1]);
+      const minutes = Number(match[2]);
+      const meridiem = match[3]?.toUpperCase();
+      if (meridiem === "PM" && hours < 12) hours += 12;
+      if (meridiem === "AM" && hours === 12) hours = 0;
+      return hours * 60 + minutes;
+    }
+  }
+
+  return null;
+}
+
+function formatDateFromDay(start: Date | null, day: number | null) {
+  if (!start || day === null) return null;
+  const date = new Date(start);
+  date.setDate(start.getDate() + day - 1);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().slice(0, 10);
+}
+
+function parseIsoDate(value: string | null): Date | null {
+  if (!value) return null;
+  const date = new Date(value.trim());
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function stringOrNull(value: unknown): string | null {
+  if (typeof value === "string") return value.trim();
+  if (value === null || value === undefined) return null;
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return null;
+}
+
+function isLikelyPersonName(value: unknown): boolean {
+  const s = String(value ?? "").trim();
+  if (!s) return false;
+
+  const lower = s.toLowerCase();
+
+  // reject placeholders / numbers
+  if (s === "—" || s === "-" || s === "0") return false;
+  if (/^\d+$/.test(s)) return false;
+
+  // reject known template labels
+  const bad = new Set([
+    "before noon",
+    "after noon",
+    "overtime",
+    "time card",
+    "date",
+    "weekday",
+    "in",
+    "out",
+    "hours",
+    "total",
+  ]);
+  if (bad.has(lower)) return false;
+
+  // must contain letters
+  if (!/[a-z]/i.test(s)) return false;
+
+  // MUST be at least 2 words (first + last name)
+  if (s.split(/\s+/).length < 2) return false;
+
+  return true;
+}
+
+function norm(value: unknown) {
+  return String(value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function excelTimeToMinutes(value: unknown): number | null {
+  if (value == null || value === "") return null;
+
+  if (value instanceof Date) {
+    const mins = value.getHours() * 60 + value.getMinutes();
+    const secs = value.getSeconds();
+    // Round up if 30 or more seconds
+    return secs >= 30 ? mins + 1 : mins;
+  }
+
+  if (typeof value === "number") {
+    const mins = Math.round(value * 24 * 60);
+    return mins >= 0 && mins < 24 * 60 ? mins : null;
+  }
+
+  if (typeof value === "string") {
+    const d = new Date(`2000-01-01 ${value.trim()}`);
+    if (!Number.isNaN(d.getTime())) {
+      const mins = d.getHours() * 60 + d.getMinutes();
+      const secs = d.getSeconds();
+      // Round up if 30 or more seconds
+      return secs >= 30 ? mins + 1 : mins;
+    }
+  }
+
+  return null;
+}
+
+function minutesToHHMM(minutes: number | null): string | null {
+  if (minutes == null) return null;
+  const hh = String(Math.floor(minutes / 60)).padStart(2, "0");
+  const mm = String(minutes % 60).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+function parseDateRangeStart(rangeText: unknown): Date | null {
+  const s = String(rangeText ?? "");
+  const first = s.split("~")[0]?.trim();
+  const d = new Date(first);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function formatYMD(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function sumPairs(pairs: Array<{ inMin: number | null; outMin: number | null }>): number {
+  let total = 0;
+  for (const p of pairs) {
+    if (p.inMin == null || p.outMin == null) continue;
+    let out = p.outMin;
+    if (out < p.inMin) out += 24 * 60;
+    total += out - p.inMin;
+  }
+  return total;
+}
+
+function parseTimeCardBlocksSheet(rows: (string | number | Date | undefined)[][]): ParseResult | null {
+  const containsTimeCard = rows.some((r) => r.some((c) => norm(c) === "time card"));
+  if (!containsTimeCard) return null;
+
+  const out: ParsedTimesheetRow[] = [];
+  const warnings: string[] = [];
+  let dateRangeText: unknown = null;
+  let startDate: Date | null = null;
+  let employeeName: string | null = null;
+
+  // Find Time Card header row and extract metadata
+  for (let r = 0; r < Math.min(rows.length, 15); r++) {
+    const rowText = rows[r].map((c) => norm(c)).filter(Boolean).join(" ");
+    if (rowText.includes("time card") && rowText.includes("before noon")) {
+      // Found header row like: ["Date/Weekday","Before Noon",null,null,null,null,"After Noon",...]
+      // Look for employee name and date range in previous rows
+      for (let prev = r - 1; prev >= 0; prev--) {
+        const prevRow = rows[prev];
+        if (prevRow.some((c) => norm(c)?.includes("name"))) {
+          const nameIdx = prevRow.findIndex((c) => norm(c)?.toLowerCase() === "name");
+          if (nameIdx >= 0 && prevRow[nameIdx + 1]) {
+            employeeName = stringOrNull(prevRow[nameIdx + 1]) ?? employeeName;
+          }
+        }
+        if (prevRow.some((c) => norm(c)?.includes("date"))) {
+          const dateIdx = prevRow.findIndex((c) => norm(c)?.toLowerCase() === "date");
+          if (dateIdx >= 0 && prevRow[dateIdx + 1]) {
+            dateRangeText = prevRow[dateIdx + 1];
+            startDate = parseDateRangeStart(dateRangeText);
+          }
+        }
+      }
+      break;
+    }
+  }
+
+  // If not found in that format, try alternative format
+  if (!startDate || !employeeName) {
+    for (let r = 0; r < Math.min(rows.length, 10); r++) {
+      const row = rows[r];
+      for (let c = 0; c < row.length; c++) {
+        if (norm(row[c]) === "time card") {
+          // Found Time Card marker, look for employee name and date nearby
+          const nameRow = rows[3];
+          if (nameRow) {
+            const nameIdx = nameRow.findIndex((cell) => norm(cell)?.toLowerCase() === "name");
+            if (nameIdx >= 0 && nameRow[nameIdx + 1]) {
+              employeeName = stringOrNull(nameRow[nameIdx + 1]) ?? employeeName;
+            }
+          }
+          const dateRow = rows[4];
+          if (dateRow) {
+            const dateIdx = dateRow.findIndex((cell) => norm(cell)?.toLowerCase() === "date");
+            if (dateIdx >= 0 && dateRow[dateIdx + 1]) {
+              dateRangeText = dateRow[dateIdx + 1];
+              startDate = parseDateRangeStart(dateRangeText);
+            }
+          }
+          break;
+        }
+      }
+      if (startDate && employeeName) break;
+    }
+  }
+
+  if (!employeeName || !startDate) return null;
+  if (!isLikelyPersonName(employeeName)) return null;
+
+  // Find all Time Card blocks and parse weekday data
+  for (let r = 0; r < rows.length; r++) {
+    for (let c = 0; c < (rows[r]?.length ?? 0); c++) {
+      if (norm(rows[r][c]) !== "time card") continue;
+
+      const startCol = c;
+      
+      // Extract User ID for this block (look in rows 3-4, same column offset as name)
+      let blockUserId: string | null = null;
+      const nameRow = rows[3];
+      if (nameRow) {
+        const nameIdx = nameRow.findIndex((cell) => norm(cell)?.toLowerCase() === "name");
+        if (nameIdx >= 0) {
+          // User ID is typically 2 columns before the name
+          const userIdIdx = nameIdx - 2;
+          if (userIdIdx >= 0 && nameRow[userIdIdx]) {
+            blockUserId = stringOrNull(nameRow[userIdIdx]);
+          }
+        }
+      }
+      // Alternative: look for "User ID" label in row 4
+      if (!blockUserId) {
+        const dateRow = rows[4];
+        if (dateRow) {
+          const userIdIdx = dateRow.findIndex((cell) => norm(cell)?.toLowerCase() === "user id");
+          if (userIdIdx >= 0 && dateRow[userIdIdx + 1]) {
+            blockUserId = stringOrNull(dateRow[userIdIdx + 1]);
+          }
+        }
+      }
+
+      // Find weekday rows (rows that start with day number like "11 Mo", "12 Tu", etc.)
+      for (let rr = r + 1; rr < Math.min(r + 20, rows.length); rr++) {
+        const label = rows[rr]?.[startCol];
+        if (!label) continue;
+        if (norm(label) === "time card") break;
+        if (typeof label !== "string") continue;
+
+        const dayMatch = label.trim().match(/^(\d{1,2})\s+([A-Za-z]{2,3})/);
+        if (!dayMatch) continue;
+
+        const dayNum = Number(dayMatch[1]);
+        const weekday = dayMatch[2];
+        if (!Number.isFinite(dayNum)) continue;
+
+        const dateObj = new Date(startDate);
+        dateObj.setDate(dayNum);
+        const date = formatYMD(dateObj);
+
+        // Extract all 6 time fields from columns
+        // Column layout: startCol=day label, +1=BN In, +2=null, +3=BN Out, +4-5=null, +6=AN In, +7=null, +8=AN Out, +10=OT In, +12=OT Out
+        const bnIn = excelTimeToMinutes(rows[rr]?.[startCol + 1]);
+        const bnOut = excelTimeToMinutes(rows[rr]?.[startCol + 3]);
+        const anIn = excelTimeToMinutes(rows[rr]?.[startCol + 6]);
+        const anOut = excelTimeToMinutes(rows[rr]?.[startCol + 8]);
+        const otIn = excelTimeToMinutes(rows[rr]?.[startCol + 10]);
+        const otOut = excelTimeToMinutes(rows[rr]?.[startCol + 12]);
+
+        const totalMins = sumPairs([
+          { inMin: bnIn, outMin: bnOut },
+          { inMin: anIn, outMin: anOut },
+          { inMin: otIn, outMin: otOut },
+        ]);
+
+        const ins = [bnIn, anIn, otIn].filter((x): x is number => x != null);
+        const outs = [bnOut, anOut, otOut].filter((x): x is number => x != null);
+
+        const timeInMin = ins.length ? Math.min(...ins) : null;
+        const timeOutMin = outs.length ? Math.max(...outs) : null;
+
+        // Always push a row for each weekday, even if no time data
+        out.push({
+          employeeName: employeeName.trim(),
+          date,
+          userId: blockUserId ?? null,
+          timeIn: timeInMin !== null ? minutesToHHMM(timeInMin) : null,
+          timeOut: timeOutMin !== null ? minutesToHHMM(timeOutMin) : null,
+          totalHours: totalMins > 0 ? Math.round((totalMins / 60) * 100) / 100 : null,
+          issues: [],
+          sourceLine: rr,
+          weekday: weekday,
+          template: "time-card",
+          // All 6 time card fields
+          beforeNoonIn: bnIn !== null ? minutesToHHMM(bnIn) : null,
+          beforeNoonOut: bnOut !== null ? minutesToHHMM(bnOut) : null,
+          afterNoonIn: anIn !== null ? minutesToHHMM(anIn) : null,
+          afterNoonOut: anOut !== null ? minutesToHHMM(anOut) : null,
+          overtimeIn: otIn !== null ? minutesToHHMM(otIn) : null,
+          overtimeOut: otOut !== null ? minutesToHHMM(otOut) : null,
+        });
+      }
+    }
+  }
+
+  if (!out.length) return null;
+
+  const endDate = parseDateRangeEnd(dateRangeText);
+  return {
+    format: "excel",
+    rows: out,
+    warnings,
+    startDate: startDate?.toISOString().slice(0, 10) ?? null,
+    endDate: endDate?.toISOString().slice(0, 10) ?? null,
+  };
+}
+
+function parseDateRangeEnd(rangeText: unknown): Date | null {
+  const s = String(rangeText ?? "");
+  const parts = s.split("~");
+  if (parts.length < 2) return parseDateRangeStart(rangeText);
+  const second = parts[1]?.trim();
+  const d = new Date(second);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function detectAttendanceTemplate(lines: string[]) {
+  const title = lines.some((line) => /employee attendance table/i.test(line));
+  const timeCard = lines.some((line) => /before\s+noon/i.test(line));
+  // Accept either the explicit title or the time card markers; previously too strict and could miss valid tables.
+  return title || timeCard;
+}
+
+function parseHeaderMeta(lines: string[]) {
+  let name: string | null = null;
+  let userId: string | null = null;
+  let dept: string | null = null;
+  let startDate: Date | null = null;
+  let endDate: Date | null = null;
+  let dateRangeLabel: string | null = null;
+
+  const rangeLine = lines.find((line) => /(\d{4}-\d{2}-\d{2}).*(\d{4}-\d{2}-\d{2})/.test(line));
+  if (rangeLine) {
+    const match = rangeLine.match(/(\d{4}-\d{2}-\d{2}).*(\d{4}-\d{2}-\d{2})/);
+    if (match) {
+      startDate = parseIsoDate(match[1]);
+      endDate = parseIsoDate(match[2]);
+      dateRangeLabel = `${match[1]}~${match[2]}`;
+    }
+  }
+
+  const nameLine = lines.find((line) => /name/i.test(line) && /user\s*id/i.test(line));
+  if (nameLine) {
+    const idMatch = nameLine.match(/user\s*id\s*([A-Za-z0-9-]+)/i);
+    if (idMatch) userId = idMatch[1];
+    const nameMatch = nameLine.match(/name\s+(.+?)(?:\s+user\s*id|$)/i);
+    if (nameMatch) name = nameMatch[1].trim();
+  } else {
+    const line = lines.find((l) => /name/i.test(l));
+    const match = line?.match(/name\s+(.+)/i);
+    if (match) name = match[1].trim();
+  }
+
+  const deptLine = lines.find((line) => /dept/i.test(line));
+  if (deptLine) {
+    const match = deptLine.match(/dept\.?\s*([A-Za-z0-9-]+)/i);
+    if (match) dept = match[1];
+  }
+
+  if (!isLikelyName(name)) {
+    name = null;
+  }
+
+  return { name, userId, dept, startDate, endDate, dateRangeLabel };
+}
+
+function parseAttendanceRow(
+  line: string,
+  index: number,
+  meta: ReturnType<typeof parseHeaderMeta>
+): ParsedTimesheetRow | null {
+  if (!isLikelyName(meta.name)) return null;
+
+  const match = line.match(/^\s*(\d{1,2})\s+(Mo|Tu|We|Th|Fr|Sa|Su)\b(.*)$/i);
+  if (!match) return null;
+
+  const day = Number(match[1]);
+  const weekday = match[2];
+  const remainder = match[3].trim();
+  const tokens = remainder ? remainder.split(/\s+/).filter(Boolean).slice(0, 6) : [];
+  const [bnIn, bnOut, anIn, anOut, otIn, otOut] = tokens;
+
+  const raw = [bnIn, bnOut, anIn, anOut, otIn, otOut].map((v) => v ?? "");
+
+  const timeInCandidate = [bnIn, anIn, otIn].find((v) => !!v) ?? null;
+  const outs = [bnOut, anOut, otOut].filter((v) => !!v);
+  const timeOutCandidate = outs.length ? outs[outs.length - 1] : null;
+
+  const timeInMinutes = parseTimeToMinutes(timeInCandidate);
+  const timeOutMinutes = parseTimeToMinutes(timeOutCandidate);
+
+  const timeIn = timeInMinutes !== null ? minutesToLabel(timeInMinutes) : null;
+  const timeOut = timeOutMinutes !== null ? minutesToLabel(timeOutMinutes) : null;
+
+  let totalHours: number | null = null;
+  if (timeInMinutes !== null && timeOutMinutes !== null) {
+    const durationMinutes = timeOutMinutes >= timeInMinutes
+      ? timeOutMinutes - timeInMinutes
+      : 24 * 60 - (timeInMinutes - timeOutMinutes);
+    totalHours = Math.round((durationMinutes / 60) * 100) / 100;
+  }
+
+  const issues: string[] = [];
+  if (!timeIn && !timeOut) issues.push("Missing time in/out");
+  if (timeIn && !timeOut) issues.push("Missing time out");
+  if (timeOut && !timeIn) issues.push("Missing time in");
+  if (timeInCandidate && timeInMinutes === null) issues.push("Invalid time in format");
+  if (timeOutCandidate && timeOutMinutes === null) issues.push("Invalid time out format");
+
+  const date = formatDateFromDay(meta.startDate ?? null, Number.isNaN(day) ? null : day);
+  if (!date) issues.push("Missing or invalid date");
+  if (date && meta.endDate && new Date(date) > meta.endDate) {
+    issues.push("Date outside range");
+  }
+
+  return {
+    employeeName: meta.name ?? "",
+    date,
+    timeIn,
+    timeOut,
+    totalHours,
+    issues,
+    sourceLine: index + 1,
+    weekday,
+    dept: meta.dept ?? null,
+    userId: meta.userId ?? null,
+    template: "attendance-table",
+    raw,
+  };
+}
+
+function parseAttendanceTemplatePdf(lines: string[]): ParseResult | null {
+  if (!detectAttendanceTemplate(lines)) return null;
+  const meta = parseHeaderMeta(lines);
+  const warnings: string[] = [];
+  if (!meta.startDate) warnings.push("Missing date range start");
+
+  const rows: ParsedTimesheetRow[] = [];
+  lines.forEach((line, idx) => {
+    const parsed = parseAttendanceRow(line, idx, meta);
+    if (parsed) rows.push(parsed);
+  });
+
+  if (!rows.length) return null;
+  return {
+    format: "pdf",
+    rows,
+    warnings,
+    startDate: meta.startDate?.toISOString().slice(0, 10) ?? null,
+    endDate: meta.endDate?.toISOString().slice(0, 10) ?? null,
+  };
+}
+
+function parseSheetMeta(
+  rows: (string | number | Date | undefined)[][],
+  columnRange?: { start: number; end: number }
+) {
+  let name: string | null = null;
+  let userId: string | null = null;
+  let dept: string | null = null;
+  let startDate: Date | null = null;
+  let endDate: Date | null = null;
+
+  const datePattern = /(\d{4}-\d{2}-\d{2}).*(\d{4}-\d{2}-\d{2})/;
+
+  const inRange = (col: number) => {
+    if (!columnRange) return true;
+    return col >= columnRange.start && col <= columnRange.end;
+  };
+
+  const nextNonEmptyInRow = (row: (string | number | Date | undefined)[], start: number) => {
+    for (let c = start; c < Math.min(row.length, start + 6); c += 1) {
+      if (!inRange(c)) continue;
+      const val = stringOrNull(row[c]);
+      if (val) return val;
+    }
+    return null;
+  };
+
+  const belowNonEmpty = (rowIdx: number, colIdx: number) => {
+    for (let r = rowIdx + 1; r <= rowIdx + 3 && r < rows.length; r += 1) {
+      const val = stringOrNull(rows[r][colIdx]);
+      if (val) return val;
+    }
+    return null;
+  };
+
+  for (let r = 0; r < Math.min(rows.length, 12); r += 1) {
+    const row = rows[r];
+    const limitedRow = columnRange
+      ? row.map((cell, idx) => (inRange(idx) ? cell : undefined))
+      : row;
+    const joined = limitedRow.map(stringOrNull).filter(Boolean).join(" ");
+    if (!startDate) {
+      const m = joined.match(datePattern);
+      if (m) {
+        startDate = parseIsoDate(m[1]);
+        endDate = parseIsoDate(m[2]);
+      }
+    }
+
+    for (let c = 0; c < row.length; c += 1) {
+      if (!inRange(c)) continue;
+      const cell = stringOrNull(row[c]);
+      const next = stringOrNull(row[c + 1]);
+      if (!cell) continue;
+      const lower = cell.toLowerCase();
+
+      if (!name && lower.includes("name")) {
+        name = next ?? nextNonEmptyInRow(row, c + 1) ?? belowNonEmpty(r, c) ?? name;
+      }
+      if (!userId && lower.includes("user") && lower.includes("id")) {
+        userId = next ?? nextNonEmptyInRow(row, c + 1) ?? belowNonEmpty(r, c) ?? userId;
+      }
+      if (!dept && lower.startsWith("dept")) {
+        const cleaned = cell.replace(/dept[:.]?/i, "").trim();
+        dept = next ?? nextNonEmptyInRow(row, c + 1) ?? belowNonEmpty(r, c) ?? (cleaned ? cleaned : null);
+      }
+      if (!startDate && datePattern.test(cell)) {
+        const m = cell.match(datePattern);
+        if (m) {
+          startDate = parseIsoDate(m[1]);
+          endDate = parseIsoDate(m[2]);
+        }
+      }
+    }
+  }
+
+  // Fallback: some templates have "Name <value>" in the same cell or two columns apart (row ~4)
+  if (!name) {
+    for (let r = 0; r <= 6 && r < rows.length; r += 1) {
+      for (let c = columnRange ? columnRange.start : 0; c <= (columnRange ? columnRange.end : rows[r].length - 1); c += 1) {
+        if (!inRange(c)) continue;
+        const cell = stringOrNull(rows[r][c]);
+        if (!cell) continue;
+        const lower = cell.toLowerCase();
+        const nameInline = cell.match(/name\s+(.+)/i);
+        if (nameInline && nameInline[1]) {
+          name = nameInline[1].trim();
+          break;
+        }
+        if (lower === "name") {
+          const next = stringOrNull(rows[r][c + 1]) || stringOrNull(rows[r][c + 2]);
+          if (next) {
+            name = next;
+            break;
+          }
+        }
+      }
+      if (name) break;
+    }
+  }
+
+  if (!userId) {
+    for (let r = 0; r <= 6 && r < rows.length; r += 1) {
+      for (let c = columnRange ? columnRange.start : 0; c <= (columnRange ? columnRange.end : rows[r].length - 1); c += 1) {
+        if (!inRange(c)) continue;
+        const cell = stringOrNull(rows[r][c]);
+        if (!cell) continue;
+        const lower = cell.toLowerCase();
+        const idInline = cell.match(/user\s*id\s*([A-Za-z0-9-]+)/i);
+        if (idInline && idInline[1]) {
+          userId = idInline[1];
+          break;
+        }
+        if (lower === "user id" || lower === "userid") {
+          const next = stringOrNull(rows[r][c + 1]) || stringOrNull(rows[r][c + 2]);
+          if (next) {
+            userId = next;
+            break;
+          }
+        }
+      }
+      if (userId) break;
+    }
+  }
+
+  return { name, userId, dept, startDate, endDate };
+}
+
+function parseAttendanceSheetRow(
+  row: (string | number | Date | undefined)[],
+  index: number,
+  meta: ReturnType<typeof parseSheetMeta>
+): ParsedTimesheetRow | null {
+  if (!isLikelyName(meta.name)) return null;
+
+  if (!row.length) return null;
+
+  const first = stringOrNull(row[0]);
+  const second = stringOrNull(row[1]);
+
+  let day: number | null = null;
+  let weekday: string | null = null;
+  let weekdayInSeparateCol = false;
+
+  if (first && /^\d{1,2}\s+[A-Za-z]{2}/.test(first)) {
+    const m = first.match(/^(\d{1,2})\s+([A-Za-z]{2})/);
+    if (m) {
+      day = Number(m[1]);
+      weekday = m[2];
+      weekdayInSeparateCol = false;
+    }
+  } else {
+    if (typeof row[0] === "number") day = row[0];
+    else if (first && /^\d{1,2}$/.test(first)) day = Number(first);
+    if (second && /^[A-Za-z]{2}$/.test(second)) {
+      weekday = second;
+      weekdayInSeparateCol = true;
+    }
+  }
+
+  const baseCol = weekdayInSeparateCol ? 2 : 1;
+  const bnIn = stringOrNull(row[baseCol]);
+  const bnOut = stringOrNull(row[baseCol + 1]);
+  const anIn = stringOrNull(row[baseCol + 2]);
+  const anOut = stringOrNull(row[baseCol + 3]);
+  const otIn = stringOrNull(row[baseCol + 4]);
+  const otOut = stringOrNull(row[baseCol + 5]);
+
+  const raw = [bnIn, bnOut, anIn, anOut, otIn, otOut].map((v) => v ?? "");
+
+  const hasAnyTime = [bnIn, bnOut, anIn, anOut, otIn, otOut].some((v) => v && v.trim() !== "");
+  if (day === null && !hasAnyTime) {
+    return null;
+  }
+
+  if (day === null || !Number.isFinite(day) || day < 1 || day > 31) {
+    return null;
+  }
+  const timeInCandidate = [bnIn, anIn, otIn].find((v) => !!v) ?? null;
+  const outs = [bnOut, anOut, otOut].filter((v) => !!v);
+  const timeOutCandidate = outs.length ? outs[outs.length - 1] : null;
+
+  const timeInMinutes = parseTimeToMinutes(timeInCandidate);
+  const timeOutMinutes = parseTimeToMinutes(timeOutCandidate);
+
+  const timeIn = timeInMinutes !== null ? minutesToLabel(timeInMinutes) : null;
+  const timeOut = timeOutMinutes !== null ? minutesToLabel(timeOutMinutes) : null;
+
+  let totalHours: number | null = null;
+  if (timeInMinutes !== null && timeOutMinutes !== null) {
+    const durationMinutes = timeOutMinutes >= timeInMinutes
+      ? timeOutMinutes - timeInMinutes
+      : 24 * 60 - (timeInMinutes - timeOutMinutes);
+    totalHours = Math.round((durationMinutes / 60) * 100) / 100;
+  }
+
+  const issues: string[] = [];
+  if (!timeIn && !timeOut) issues.push("Missing time in/out");
+  if (timeIn && !timeOut) issues.push("Missing time out");
+  if (timeOut && !timeIn) issues.push("Missing time in");
+  if (timeInCandidate && timeInMinutes === null) issues.push("Invalid time in format");
+  if (timeOutCandidate && timeOutMinutes === null) issues.push("Invalid time out format");
+
+  const date = formatDateFromDay(meta.startDate, day);
+  if (!date) issues.push("Missing or invalid date");
+  if (date && meta.endDate && new Date(date) > meta.endDate) {
+    issues.push("Date outside range");
+  }
+
+  return {
+    employeeName: meta.name ?? "",
+    date,
+    timeIn,
+    timeOut,
+    totalHours,
+    issues,
+    sourceLine: index + 1,
+    weekday: weekday ?? null,
+    dept: meta.dept ?? null,
+    userId: meta.userId ?? null,
+    template: "attendance-table",
+    raw,
+  };
+}
+
+// Parse Attendance Statistic Table (has payroll data: work hours, OT, late, early, etc.)
+function parseAttendanceStatisticTable(rows: (string | number | Date | undefined)[][]): ParseResult | null {
+  // Find header row with "User ID" or "Name" to detect column positions
+  const headerIndex = rows.findIndex((row) => {
+    const text = row.map((cell) => stringOrNull(cell)).filter(Boolean).join(" ").toLowerCase();
+    return text.includes("worktime") || text.includes("overtime") || text.includes("late");
+  });
+
+  if (headerIndex === -1) return null;
+
+  const meta = parseSheetMeta(rows);
+  const warnings: string[] = [];
+  if (!meta.startDate) warnings.push("Missing date range start");
+
+  // Detect column positions from header row
+  const headerRow = rows[headerIndex];
+  let userIdCol = 0;
+  let nameCol = 1;
+  let deptCol = 2;
+  
+  headerRow.forEach((cell, idx) => {
+    const str = stringOrNull(cell)?.toLowerCase();
+    if (str?.includes("user") && str?.includes("id")) userIdCol = idx;
+    if (str === "name") nameCol = idx;
+    if (str?.includes("dept") || str?.includes("department")) deptCol = idx;
+  });
+
+  // Find sub-header row for detailed columns
+  const subHeaderIndex = rows.findIndex((row, idx) =>
+    idx > headerIndex && row.some((cell) => {
+      const str = stringOrNull(cell);
+      return str && (str.includes("Normal") || str.includes("Actual") || str.includes("Trip"));
+    })
+  );
+
+  const parsed: ParsedTimesheetRow[] = [];
+  // Data starts after the sub-header row (if exists) or after the main header
+  const dataStartIndex = subHeaderIndex > headerIndex ? subHeaderIndex + 1 : headerIndex + 1;
+
+  for (let i = dataStartIndex; i < rows.length; i += 1) {
+    const row = rows[i];
+    if (!row.some((cell) => stringOrNull(cell))) continue;
+
+    const userId = stringOrNull(row[userIdCol]);
+    const name = stringOrNull(row[nameCol]);
+    const dept = stringOrNull(row[deptCol]);
+
+    // Column indices based on template: Worktime(Normal), Worktime(Actual), Late(Times), Late(Minute),
+    // Early(Times), Early(Minute), Overtime(Normal), Overtime(Holiday), Workday, Trip, Absence, Leave
+    const workHours = typeof row[3] === "number" ? row[3] : null;
+    const workHoursActual = typeof row[4] === "number" ? row[4] : null;
+    const lateCount = typeof row[5] === "number" ? row[5] : null;
+    const lateMinutes = typeof row[6] === "number" ? row[6] : null;
+    const earlyCount = typeof row[7] === "number" ? row[7] : null;
+    const earlyMinutes = typeof row[8] === "number" ? row[8] : null;
+    const overtimeHours = typeof row[9] === "number" ? row[9] : null;
+    const overtimeHoliday = typeof row[10] === "number" ? row[10] : null;
+    const workDays = stringOrNull(row[11]);
+    const tripDays = typeof row[12] === "number" ? row[12] : null;
+    const absenceDays = typeof row[13] === "number" ? row[13] : null;
+    const leaveDays = typeof row[14] === "number" ? row[14] : null;
+    // Add Pay columns (16: Normal, 17: Overtime, 18: Allowance)
+    const addPayNormal = typeof row[16] === "number" ? row[16] : null;
+    const addPayOvertime = typeof row[17] === "number" ? row[17] : null;
+    const addPayAllowance = typeof row[18] === "number" ? row[18] : null;
+    // Leave Pay columns (19: Late/Early, 20: NoPaidLeave)
+    const leavePayLateEarly = typeof row[19] === "number" ? row[19] : null;
+    const leavePayNoPaid = typeof row[20] === "number" ? row[20] : null;
+    // Payroll Deduction (21) and Remark (22)
+    const payrollDeduction = typeof row[21] === "number" ? row[21] : null;
+    const remark = stringOrNull(row[22]);
+
+    if (!name && !userId) continue;
+
+    parsed.push({
+      employeeName: name ?? "",
+      date: meta.startDate?.toISOString().slice(0, 10) ?? null,
+      timeIn: null,
+      timeOut: null,
+      totalHours: workHoursActual ?? workHours ?? null,
+      issues: [],
+      sourceLine: i + 1,
+      dept: dept ?? meta.dept ?? null,
+      userId: userId ?? meta.userId ?? null,
+      template: "attendance-statistic",
+      workHours: workHours ?? null,
+      workHoursActual: workHoursActual ?? null,
+      overtimeHours: overtimeHours ?? null,
+      overtimeHoliday: overtimeHoliday ?? null,
+      lateCount: lateCount ?? null,
+      lateMinutes: lateMinutes ?? null,
+      earlyCount: earlyCount ?? null,
+      earlyMinutes: earlyMinutes ?? null,
+      workDays: workDays ?? null,
+      tripDays: tripDays ?? null,
+      absenceDays: absenceDays ?? null,
+      leaveDays: leaveDays ?? null,
+      addPayNormal: addPayNormal ?? null,
+      addPayOvertime: addPayOvertime ?? null,
+      addPayAllowance: addPayAllowance ?? null,
+      leavePayLateEarly: leavePayLateEarly ?? null,
+      leavePayNoPaid: leavePayNoPaid ?? null,
+      payrollDeduction: payrollDeduction ?? null,
+      remark: remark ?? null,
+      attendanceStatus: "full_day",
+    });
+  }
+
+  if (!parsed.length) return null;
+  return {
+    format: "excel",
+    rows: parsed,
+    warnings,
+    startDate: meta.startDate?.toISOString().slice(0, 10) ?? null,
+    endDate: meta.endDate?.toISOString().slice(0, 10) ?? null,
+  };
+}
+
+// Parse shift code template (User ID, Name, Dept, then date columns with shift codes)
+function parseShiftCodeTemplateSheet(
+  rows: (string | number | Date | undefined)[][],
+  headerIndex: number
+): ParseResult | null {
+  const headerRow = rows[headerIndex];
+  const meta = parseSheetMeta(rows);
+  const warnings: string[] = [];
+  if (!meta.startDate) warnings.push("Missing date range start");
+
+  // Detect column positions from header
+  let userIdCol = 0;
+  let nameCol = 1;
+  let deptCol = 2;
+  
+  headerRow.forEach((cell, idx) => {
+    const str = stringOrNull(cell)?.toLowerCase();
+    if (str?.includes("user") && str?.includes("id")) userIdCol = idx;
+    if (str === "name") nameCol = idx;
+    if (str?.includes("dept") || str?.includes("department")) deptCol = idx;
+  });
+
+  // Extract dates from header (columns after Department are day numbers)
+  const dateColumns: { day: number; columnIndex: number }[] = [];
+  for (let i = Math.max(3, userIdCol, nameCol, deptCol) + 1; i < headerRow.length; i++) {
+    const cell = headerRow[i];
+    if (typeof cell === "number") {
+      dateColumns.push({ day: cell, columnIndex: i });
+    } else {
+      const str = stringOrNull(cell);
+      if (str && /^\d{1,2}$/.test(str)) {
+        dateColumns.push({ day: Number(str), columnIndex: i });
+      }
+    }
+  }
+
+  if (dateColumns.length === 0) return null;
+
+  const parsed: ParsedTimesheetRow[] = [];
+  for (let i = headerIndex + 1; i < rows.length; i += 1) {
+    const row = rows[i];
+    if (!row.some((cell) => stringOrNull(cell))) continue;
+
+    const userId = stringOrNull(row[userIdCol]);
+    const name = stringOrNull(row[nameCol]);
+    const dept = stringOrNull(row[deptCol]);
+
+    // Skip rows without a real name/user
+    if (!name && !userId) continue;
+    if ((name === "0" || name === "-" || name === "") && !userId) continue;
+
+    // Create one row per date column
+    for (const { day, columnIndex } of dateColumns) {
+      const shiftCode = stringOrNull(row[columnIndex]);
+      const date = formatDateFromDay(meta.startDate, day);
+
+      const issues: string[] = [];
+      if (!date) issues.push("Missing or invalid date");
+      if (!name) issues.push("Missing employee name");
+      if (!shiftCode) issues.push("Missing shift code");
+
+      parsed.push({
+        employeeName: name ?? "",
+        date,
+        timeIn: null,
+        timeOut: null,
+        totalHours: null,
+        issues,
+        sourceLine: i + 1,
+        weekday: null,
+        dept: dept ?? meta.dept ?? null,
+        userId: userId ?? meta.userId ?? null,
+        template: "shift-code-table",
+        raw: [shiftCode ?? ""],
+        attendanceStatus: "full_day",
+      });
+    }
+  }
+
+  if (!parsed.length) return null;
+  return {
+    format: "excel",
+    rows: parsed,
+    warnings,
+    startDate: meta.startDate?.toISOString().slice(0, 10) ?? null,
+    endDate: meta.endDate?.toISOString().slice(0, 10) ?? null,
+  };
+}
+
+function findAttendanceBlocks(rows: (string | number | Date | undefined)[][]) {
+  const blocks: { headerRow: number; headerCol: number }[] = [];
+  for (let r = 0; r < rows.length; r += 1) {
+    const row = rows[r];
+    const joined = row.map(stringOrNull).filter(Boolean).join(" ").toLowerCase();
+
+    for (let c = 0; c < row.length; c += 1) {
+      const cell = stringOrNull(row[c]);
+      if (!cell) continue;
+      const lower = cell.toLowerCase();
+
+      if (lower.includes("date") && joined.includes("before") && joined.includes("noon")) {
+        // widen lookahead to capture merged header spans
+        let hasBeforeNoon = false;
+        for (let k = 1; k <= 12; k += 1) {
+          const look = stringOrNull(row[c + k])?.toLowerCase();
+          if (look && look.includes("before") && look.includes("noon")) {
+            hasBeforeNoon = true;
+            break;
+          }
+        }
+        if (hasBeforeNoon || joined.includes("before noon")) {
+          blocks.push({ headerRow: r, headerCol: c });
+        }
+      }
+
+      // Fallback: some attendance tables are labeled "Employee Attendance Table" without the "before noon" wording.
+      if (joined.includes("employee attendance table") && lower.includes("date")) {
+        blocks.push({ headerRow: r, headerCol: c });
+      }
+    }
+  }
+  return blocks;
+}
+
+function parseAttendanceTemplateSheet(rows: (string | number | Date | undefined)[][]): ParseResult | null {
+  const blocks = findAttendanceBlocks(rows);
+  if (!blocks.length) return null;
+
+  const parsed: ParsedTimesheetRow[] = [];
+  const warnings: string[] = [];
+  let firstMetaStartDate: Date | null = null;
+  let firstMetaEndDate: Date | null = null;
+
+  for (const block of blocks) {
+    const startRow = block.headerRow + 1;
+    const c = block.headerCol;
+    const meta = parseSheetMeta(rows, { start: c, end: c + 30 });
+    if (!meta.startDate) warnings.push("Missing date range start");
+    if (!meta.name) warnings.push("Missing employee name");
+    
+    // Capture first block's meta for return
+    if (!firstMetaStartDate && meta.startDate) firstMetaStartDate = meta.startDate;
+    if (!firstMetaEndDate && meta.endDate) firstMetaEndDate = meta.endDate;
+
+    let blankStreak = 0;
+
+    for (let i = startRow; i < rows.length; i += 1) {
+      const slice: (string | number | Date | undefined)[] = [];
+      for (let j = 0; j < 10; j += 1) {
+        const value = stringOrNull(rows[i][c + j]);
+        slice.push(value ?? "");
+      }
+
+      const hasData = slice.some((cell) => stringOrNull(cell));
+      if (!hasData) {
+        blankStreak += 1;
+        if (blankStreak >= 6) break;
+        continue;
+      }
+
+      const entry = parseAttendanceSheetRow(slice, i, meta);
+      if (entry) {
+        parsed.push(entry);
+        blankStreak = 0;
+      }
+    }
+  }
+
+  if (!parsed.length) return null;
+  return {
+    format: "excel",
+    rows: parsed,
+    warnings,
+    startDate: firstMetaStartDate?.toISOString().slice(0, 10) ?? null,
+    endDate: firstMetaEndDate?.toISOString().slice(0, 10) ?? null,
+  };
+}
+
+function findHeaderRowAndMapping(rows: (string | number | Date | undefined)[][]) {
+  let bestIndex = 0;
+  let bestMapping = mapHeaderIndices(rows[0]);
+  let bestScore = Object.keys(bestMapping).length;
+
+  const maxScan = Math.min(rows.length, 25);
+  for (let i = 0; i < maxScan; i += 1) {
+    const mapping = mapHeaderIndices(rows[i]);
+    const recognized = Object.keys(mapping).length;
+    if (!recognized) continue;
+
+    const requiredPresent = REQUIRED_FIELDS.filter((field) => mapping[field] !== undefined).length;
+    const score = recognized * 2 + requiredPresent * 3;
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestMapping = mapping;
+      bestIndex = i;
+    }
+  }
+
+  return { headerIndex: bestIndex, mapping: bestMapping };
+}
+
+function parseGenericMappedSheet(rows: (string | number | Date | undefined)[][]): ParseResult {
+  if (rows.length === 0) {
+    return { format: "excel", rows: [], warnings: ["Worksheet is empty"] };
+  }
+
+  const { headerIndex, mapping } = findHeaderRowAndMapping(rows);
+  const dataStart = headerIndex + 1;
+  const dataRows = rows.slice(dataStart);
+  const warnings: string[] = [];
+
+  const missingRequired = REQUIRED_FIELDS.filter((field) => mapping[field] === undefined);
+  if (missingRequired.length) {
+    warnings.push(`Missing columns: ${missingRequired.join(", ")}`);
+  }
+
+  const parsedRows = dataRows.map((row, idx) => buildRow(row, mapping, dataStart + idx + 1));
+
+  return {
+    format: "excel",
+    rows: parsedRows,
+    warnings,
+  };
+}
+
+function buildRow(
+  row: (string | number | Date | undefined)[],
+  mapping: Partial<Record<NormalizedField, number>>,
+  sourceLine: number
+): ParsedTimesheetRow {
+  const nameIndex = mapping.employeeName;
+  const dateIndex = mapping.date;
+  const timeInIndex = mapping.timeIn;
+  const timeOutIndex = mapping.timeOut;
+  const hoursIndex = mapping.hours;
+
+  const rawName = nameIndex !== undefined ? row[nameIndex] : undefined;
+  const rawDate = dateIndex !== undefined ? row[dateIndex] : undefined;
+  const rawTimeIn = timeInIndex !== undefined ? row[timeInIndex] : undefined;
+  const rawTimeOut = timeOutIndex !== undefined ? row[timeOutIndex] : undefined;
+  const rawHours = hoursIndex !== undefined ? row[hoursIndex] : undefined;
+
+  const issues: string[] = [];
+  const employeeName = typeof rawName === "string" ? rawName.trim() : String(rawName ?? "").trim();
+  if (!employeeName) issues.push("Missing employee name");
+
+  const date = parseDateValue(rawDate);
+  if (!date) issues.push("Missing or invalid date");
+
+  const timeInMinutes = parseTimeToMinutes(rawTimeIn);
+  const timeOutMinutes = parseTimeToMinutes(rawTimeOut);
+
+  const timeIn = timeInMinutes !== null ? minutesToLabel(timeInMinutes) : null;
+  const timeOut = timeOutMinutes !== null ? minutesToLabel(timeOutMinutes) : null;
+
+  let totalHours = parseHoursValue(rawHours);
+  if (totalHours === null && timeInMinutes !== null && timeOutMinutes !== null) {
+    const durationMinutes = timeOutMinutes >= timeInMinutes
+      ? timeOutMinutes - timeInMinutes
+      : 24 * 60 - (timeInMinutes - timeOutMinutes);
+    totalHours = Math.round((durationMinutes / 60) * 100) / 100;
+  }
+
+  if (totalHours === null) issues.push("Missing hours (total or derived)");
+
+  return {
+    employeeName,
+    date,
+    timeIn,
+    timeOut,
+    totalHours,
+    issues,
+    sourceLine,
+  };
+}
+
+export function parseExcelTimesheet(buffer: Buffer): ParseResult {
+  const workbook = XLSX.read(buffer, { type: "buffer", cellDates: true });
+  const sheetNames = workbook.SheetNames;
+
+  if (!sheetNames.length) {
+    throw new Error("No sheets found in workbook");
+  }
+
+  const aggregatedRows: ParsedTimesheetRow[] = [];
+  const warnings: string[] = [];
+  let startDate: string | null = null;
+  let endDate: string | null = null;
+
+  // Prioritize attendance statistic/payroll sheets first
+  const prioritySheet = sheetNames.find((name: string) =>
+    name.toLowerCase().includes("attendance statistic") ||
+    name.toLowerCase().includes("payroll")
+  );
+
+  const orderedSheets = prioritySheet
+    ? [prioritySheet, ...sheetNames.filter((n: string) => n !== prioritySheet)]
+    : sheetNames;
+
+  orderedSheets.forEach((sheetName: string) => {
+    const sheet = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json<(string | number | Date | undefined)[]>(sheet, {
+      header: 1,
+      blankrows: false,
+      raw: true,
+      defval: "",
+    });
+
+    let sheetParsed = false;
+
+    const statParsed = parseAttendanceStatisticTable(rows);
+    if (statParsed) {
+      aggregatedRows.push(...statParsed.rows.map((r) => ({ ...r, sheetName })));
+      warnings.push(...statParsed.warnings.map((w) => `${sheetName}: ${w}`));
+      if (!startDate && statParsed.startDate) startDate = statParsed.startDate;
+      if (!endDate && statParsed.endDate) endDate = statParsed.endDate;
+      sheetParsed = true;
+    }
+
+    const attendanceParsed = parseAttendanceTemplateSheet(rows);
+    if (attendanceParsed) {
+      aggregatedRows.push(...attendanceParsed.rows.map((r) => ({ ...r, sheetName })));
+      warnings.push(...attendanceParsed.warnings.map((w) => `${sheetName}: ${w}`));
+      if (!startDate && attendanceParsed.startDate) startDate = attendanceParsed.startDate;
+      if (!endDate && attendanceParsed.endDate) endDate = attendanceParsed.endDate;
+      sheetParsed = true;
+    }
+
+    const timeCardParsed = parseTimeCardBlocksSheet(rows);
+    if (timeCardParsed) {
+      aggregatedRows.push(...timeCardParsed.rows.map((r) => ({ ...r, sheetName })));
+      warnings.push(...timeCardParsed.warnings.map((w) => `${sheetName}: ${w}`));
+      if (!startDate && timeCardParsed.startDate) startDate = timeCardParsed.startDate;
+      if (!endDate && timeCardParsed.endDate) endDate = timeCardParsed.endDate;
+      sheetParsed = true;
+    }
+
+    // Shift setting table
+    if (!sheetParsed) {
+      const shiftHeaderIndex = rows.findIndex((row: (string | number | Date | undefined)[]) => {
+        const text = row.map((cell: string | number | Date | undefined) => stringOrNull(cell)?.toLowerCase() ?? "").join(" ");
+        return text.includes("user id") && text.includes("name");
+      });
+      if (shiftHeaderIndex !== -1) {
+        const shiftParsed = parseShiftCodeTemplateSheet(rows, shiftHeaderIndex);
+        if (shiftParsed) {
+          aggregatedRows.push(...shiftParsed.rows.map((r) => ({ ...r, sheetName })));
+          warnings.push(...shiftParsed.warnings.map((w) => `${sheetName}: ${w}`));
+          if (!startDate && shiftParsed.startDate) startDate = shiftParsed.startDate;
+          if (!endDate && shiftParsed.endDate) endDate = shiftParsed.endDate;
+        }
+      }
+    }
+
+    // Generic parser as fallback
+    if (!sheetParsed) {
+      const generic = parseGenericMappedSheet(rows);
+      aggregatedRows.push(...generic.rows.map((r) => ({ ...r, sheetName })));
+      warnings.push(...generic.warnings.map((w) => `${sheetName}: ${w}`));
+    }
+  });
+
+  const cleaned = aggregatedRows.filter((row) => {
+    // Keep rows with valid employee names
+    if (!isLikelyPersonName(row.employeeName)) return false;
+
+    // For Time Card template rows, keep them even without time data (to show all weekdays)
+    if (row.template === "time-card") return !!row.date;
+
+    // For other templates, require some time data
+    const hasTime = (row.timeIn && row.timeIn.trim() !== "") || (row.timeOut && row.timeOut.trim() !== "") || (row.totalHours ?? 0) > 0;
+    return hasTime;
+  });
+
+  // Deduplicate Time Card rows: keep one row per employee+date+weekday, preferring rows with time data
+  const dedupMap = new Map<string, ParsedTimesheetRow>();
+  for (const row of cleaned) {
+    if (row.template === "time-card") {
+      // Use userId if available, otherwise fall back to employeeName
+      const identifier = row.userId || row.employeeName;
+      const key = `${identifier}|${row.date}|${row.weekday}`;
+      const existing = dedupMap.get(key);
+      if (!existing) {
+        dedupMap.set(key, row);
+      } else {
+        // Prefer row with more time data
+        const existingTimeCount = countTimeFields(existing);
+        const newRowCount = countTimeFields(row);
+        if (newRowCount > existingTimeCount) {
+          dedupMap.set(key, row);
+        }
+      }
+    } else {
+      // Non-time-card rows: use employee+date as key
+      const key = `other|${row.employeeName}|${row.date}`;
+      if (!dedupMap.has(key)) {
+        dedupMap.set(key, row);
+      }
+    }
+  }
+
+  const deduplicated = Array.from(dedupMap.values());
+
+  return {
+    format: "excel",
+    rows: deduplicated,
+    warnings,
+    startDate,
+    endDate,
+  };
+}
+
+function countTimeFields(row: ParsedTimesheetRow): number {
+  let count = 0;
+  if (row.beforeNoonIn) count++;
+  if (row.beforeNoonOut) count++;
+  if (row.afterNoonIn) count++;
+  if (row.afterNoonOut) count++;
+  if (row.overtimeIn) count++;
+  if (row.overtimeOut) count++;
+  if (row.timeIn) count++;
+  if (row.timeOut) count++;
+  if (row.totalHours) count++;
+  return count;
+}
+
+// CSV uses the same parser; sheet_to_json handles csv buffers via XLSX.read.
+export function parseCsvTimesheet(buffer: Buffer): ParseResult {
+  const result = parseExcelTimesheet(buffer);
+  return { ...result, format: "excel", rows: result.rows.map((r) => ({ ...r, sheetName: r.sheetName ?? "CSV" })) };
+}
+
+type Delimiter = "tab" | "pipe" | "comma" | "space";
+
+function splitWithDelimiter(line: string, delimiter: Delimiter) {
+  switch (delimiter) {
+    case "tab":
+      return line.split("\t");
+    case "pipe":
+      return line.split("|");
+    case "comma":
+      return line.split(",");
+    case "space":
+      return line.split(/\s{2,}/);
+    default:
+      return [line];
+  }
+}
+
+function detectDelimiter(line: string): { parts: string[]; delimiter: Delimiter } {
+  const candidates: { parts: string[]; delimiter: Delimiter }[] = [
+    { delimiter: "tab", parts: splitWithDelimiter(line, "tab") },
+    { delimiter: "pipe", parts: splitWithDelimiter(line, "pipe") },
+    { delimiter: "comma", parts: splitWithDelimiter(line, "comma") },
+    { delimiter: "space", parts: splitWithDelimiter(line, "space") },
+  ];
+
+  const ranked = candidates
+    .filter((candidate) => candidate.parts.length > 1)
+    .sort((a, b) => b.parts.length - a.parts.length);
+
+  return ranked[0] ?? { delimiter: "space", parts: [line] };
+}
+
+async function extractPdfLines(buffer: Buffer): Promise<string[]> {
+  const parser = new PDFParse({ data: buffer });
+  try {
+    const textResult = await parser.getText();
+    const text = textResult?.text ?? "";
+    return text
+      .split(/\r?\n/)
+      .map((line: string) => line.trim())
+      .filter(Boolean);
+  } finally {
+    await parser.destroy();
+  }
+}
+
+export async function parsePdfTimesheet(buffer: Buffer): Promise<ParseResult> {
+  const lines = await extractPdfLines(buffer);
+  if (!lines.length) {
+    return { format: "pdf", rows: [], warnings: ["PDF contains no text"] };
+  }
+
+  const templateResult = parseAttendanceTemplatePdf(lines);
+  if (templateResult) {
+    return templateResult;
+  }
+
+  let headerIndex = -1;
+  let delimiter: Delimiter = "space";
+  let mapping: Partial<Record<NormalizedField, number>> = {};
+  let headerParts: string[] = [];
+
+  lines.forEach((line: string, idx: number) => {
+    const detected = detectDelimiter(line);
+    const normalizedParts = detected.parts.map((part) => part.trim());
+    const candidate = mapHeaderIndices(normalizedParts);
+    const recognized = Object.keys(candidate).length;
+    if (recognized >= 2 && recognized > Object.keys(mapping).length) {
+      mapping = candidate;
+      headerIndex = idx;
+      delimiter = detected.delimiter;
+      headerParts = normalizedParts;
+    }
+  });
+
+  if (headerIndex === -1) {
+    return {
+      format: "pdf",
+      rows: [],
+      warnings: ["Could not find a header row with recognizable columns"],
+    };
+  }
+
+  const warnings: string[] = [];
+  const missingRequired = REQUIRED_FIELDS.filter((field) => mapping[field] === undefined);
+  if (missingRequired.length) {
+    warnings.push(`Missing columns: ${missingRequired.join(", ")}`);
+  }
+
+  const parsedRows: ParsedTimesheetRow[] = [];
+  for (let i = headerIndex + 1; i < lines.length; i += 1) {
+    const line = lines[i];
+    const parts = splitWithDelimiter(line, delimiter).map((part) => part.trim());
+
+    if (parts.length < 2) continue;
+    const row: (string | number | Date | undefined)[] = headerParts.map((_, idx) => parts[idx]);
+    const parsed = buildRow(row, mapping, i + 1);
+    parsedRows.push(parsed);
+  }
+
+  return {
+    format: "pdf",
+    rows: parsedRows.map((r) => ({ ...r, sheetName: r.sheetName ?? "PDF" })),
+    warnings,
+    startDate: null,
+    endDate: null,
+  };
+}
